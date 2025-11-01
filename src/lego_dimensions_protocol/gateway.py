@@ -347,7 +347,7 @@ class Gateway:
                 timeout=read_timeout,
             )
         except Exception as exc:  # pragma: no cover - USB backend specific
-            is_timeout = self._is_timeout_error(exc)
+            is_timeout = self.is_timeout_error(exc)
             self._log_usb_exception(
                 "read",
                 exc,
@@ -362,7 +362,7 @@ class Gateway:
 
         return tuple(int(byte) & 0xFF for byte in data)
 
-    def _is_timeout_error(self, exc: Exception) -> bool:
+    def is_timeout_error(self, exc: Exception) -> bool:
         """Return ``True`` when *exc* indicates that no data was available."""
 
         if isinstance(exc, TimeoutError):  # pragma: no cover - defensive
@@ -413,6 +413,10 @@ class Gateway:
             return True
 
         return False
+
+    # Backwards compatible alias for callers that reached into the private helper
+    # before :meth:`is_timeout_error` existed.
+    _is_timeout_error = is_timeout_error
 
     def _log_usb_exception(
         self,

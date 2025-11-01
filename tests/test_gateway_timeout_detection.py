@@ -69,14 +69,14 @@ class _DummyUSBError(Exception):
 def test_is_timeout_error_normalises_usb_backend_timeouts(usb_core, exc):
     gateway = object.__new__(Gateway)
     gateway._usb_core = usb_core
-    assert gateway._is_timeout_error(exc)
+    assert gateway.is_timeout_error(exc)
 
 
 def test_is_timeout_error_rejects_non_timeout():
     gateway = object.__new__(Gateway)
     gateway._usb_core = SimpleNamespace(USBTimeoutError=_DummyUSBTimeoutError, USBError=_DummyUSBError)
-    assert not gateway._is_timeout_error(Exception("Other failure"))
-    assert not gateway._is_timeout_error(_DummyUSBError(errno=5, strerror="Input/output error"))
+    assert not gateway.is_timeout_error(Exception("Other failure"))
+    assert not gateway.is_timeout_error(_DummyUSBError(errno=5, strerror="Input/output error"))
 
 
 def test_log_usb_exception_timeout(caplog):
