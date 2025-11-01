@@ -347,7 +347,14 @@ class Gateway:
                 timeout=read_timeout,
             )
         except Exception as exc:  # pragma: no cover - USB backend specific
-            if self._is_timeout_error(exc):
+            is_timeout = self._is_timeout_error(exc)
+            self._log_usb_exception(
+                "read",
+                exc,
+                timeout=read_timeout,
+                is_timeout=is_timeout,
+            )
+            if is_timeout:
                 # Treat backend-specific timeout signals the same way as a "no data"
                 # result so callers can simply poll for packets.
                 return None
@@ -406,6 +413,37 @@ class Gateway:
             return True
 
         return False
+
+    def _log_usb_exception(
+        self,
+        operation: str,
+        exc: Exception,
+        *,
+        timeout: int | None,
+        is_timeout: bool,
+    ) -> None:
+        """Emit a structured log describing a USB backend failure."""
+
+        errno_value = getattr(exc, "errno", None)
+        backend_code = getattr(exc, "backend_error_code", None)
+        strerror = getattr(exc, "strerror", None)
+
+        timeout_note = "timeout" if is_timeout else "error"
+        level = logging.DEBUG if is_timeout else logging.WARNING
+
+        LOGGER.log(
+            level,
+            "USB %s %s after %sms (%s: errno=%r backend_error_code=%r "
+            "strerror=%r message=%s)",
+            operation,
+            timeout_note,
+            timeout,
+            exc.__class__.__name__,
+            errno_value,
+            backend_code,
+            strerror,
+            exc,
+        )
 
     def iter_packets(self, *, timeout: int | None = None) -> Iterator[Tuple[int, ...]]:
         """Yield packets from the portal as they arrive."""

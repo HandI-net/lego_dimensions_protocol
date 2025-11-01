@@ -5,6 +5,7 @@ import sys
 from types import SimpleNamespace
 
 import ctypes
+import logging
 
 import pytest
 
@@ -76,3 +77,29 @@ def test_is_timeout_error_rejects_non_timeout():
     gateway._usb_core = SimpleNamespace(USBTimeoutError=_DummyUSBTimeoutError, USBError=_DummyUSBError)
     assert not gateway._is_timeout_error(Exception("Other failure"))
     assert not gateway._is_timeout_error(_DummyUSBError(errno=5, strerror="Input/output error"))
+
+
+def test_log_usb_exception_timeout(caplog):
+    gateway = object.__new__(Gateway)
+
+    caplog.set_level(logging.DEBUG)
+    exc = _DummyUSBTimeoutError(errno=60)
+    gateway._log_usb_exception("read", exc, timeout=250, is_timeout=True)
+
+    assert any(
+        record.levelno == logging.DEBUG and "USB read timeout" in record.getMessage()
+        for record in caplog.records
+    )
+
+
+def test_log_usb_exception_failure(caplog):
+    gateway = object.__new__(Gateway)
+
+    caplog.set_level(logging.WARNING)
+    exc = Exception("Other failure")
+    gateway._log_usb_exception("read", exc, timeout=250, is_timeout=False)
+
+    assert any(
+        record.levelno == logging.WARNING and "USB read error" in record.getMessage()
+        for record in caplog.records
+    )
