@@ -12,6 +12,9 @@ and eventual extension to synchronised sound effects.
   is known and can be reconstructed to support seeking and looped playback.
 * **Support all known light commands** – `switch_pad`, `fade_pad`, `flash_pad`
   as well as their group variants must be expressible.
+* **Flexible colour addressing** – every event can reference either an explicit
+  RGB triplet or a palette colour, ensuring broad compatibility with simple
+  tooling as well as advanced editors.
 * **Tempo-aware timing** – actions are positioned on a tempo grid while still
   offering sub-second precision down to 1/20 s and slow events up to 10 s.
 * **Streaming friendly** – the format can be emitted/consumed incrementally
@@ -46,6 +49,12 @@ Each chunk begins with a 4-byte ASCII type tag, a 32-bit little-endian payload
 length, then the payload bytes.  Multiple chunks of the same type may appear; a
 streaming producer may interleave chunks, although encoders should emit the
 header first.
+
+An optional global chunk captures shared colour information referenced by pad events:
+
+* `PAL0` – Replaces entries in the standard 32-colour palette with custom RGB values.
+
+`PAL0` payloads contain a list of overrides: `[u8 entry_count][entry…]` where each entry is `[u8 index][u8 r][u8 g][u8 b]`.  Encoders may include multiple `PAL0` chunks; later overrides replace earlier ones.
 
 ### Header (`HEAD`)
 
@@ -101,25 +110,86 @@ new one begins, providing the requested “replace on overlap” behaviour.
 
 Supported opcodes and payloads:
 
-| Opcode | Name            | Payload                                                          | Notes                                                  |
-|-------:|-----------------|------------------------------------------------------------------|--------------------------------------------------------|
-| `0x10` | `SwitchColour`  | `u8 r, u8 g, u8 b, u16 duration_ticks`                           | Uses `switch_pad`; colour holds until duration ends or next event. |
-| `0x11` | `FadeToColour`  | `u16 ramp_ticks, u8 pulses, u8 r, u8 g, u8 b, u16 hold_ticks`     | Maps to `fade_pad` (`pulse_time`, `pulse_count`, colour). `ramp_ticks` converts to hardware pulse time. |
-| `0x12` | `FlashColour`   | `u16 on_ticks, u16 off_ticks, u8 pulses, u8 r, u8 g, u8 b, u16 hold_ticks` | Maps to `flash_pad`.  Hold covers time after last pulse before sequence ends. |
-| `0x13` | `Blackout`      | `u16 duration_ticks`                                             | Convenience for switching to black without extra bytes.|
-| `0x1F` | `KeyframeState` | `u8 state_id`                                                    | Points to a `STAT` chunk snapshot for fast seeking.     |
+| Opcode | Name                   | Payload                                                                 | Notes |
+|-------:|------------------------|-------------------------------------------------------------------------|-------|
+| `0x10` | `SwitchColour`         | `u16 transition_ticks, ColourSpec colour, u16 hold_ticks`               | Uses `switch_pad`; `transition_ticks = 0` performs an immediate switch, otherwise the player approximates the ramp with hardware fades before dwelling for `hold_ticks`. |
+| `0x11` | `FadeToColour`         | `u16 ramp_ticks, u8 pulses, ColourSpec colour, u16 hold_ticks`          | Maps to `fade_pad` (`pulse_time`, `pulse_count`, colour). `ramp_ticks` converts to hardware pulse time. |
+| `0x12` | `FlashColour`          | `u16 on_ticks, u16 off_ticks, u8 pulses, ColourSpec colour, u16 hold_ticks` | Maps to `flash_pad`. Hold covers the dwell period after the last pulse. |
+| `0x13` | `Blackout`             | `u16 transition_ticks, u16 hold_ticks`                                  | Convenience for fading or cutting to black without encoding a colour literal. |
+| `0x14` | `SetDefaultTransition` | `u16 transition_ticks`                                                  | Sets a per-track default transition applied when later events use the sentinel `transition_ticks = 0xFFFF`. |
+| `0x1F` | `KeyframeState`        | `u8 state_id`                                                           | Points to a `STAT` chunk snapshot for fast seeking. |
 
-`duration_ticks`/`hold_ticks` define when the command is considered complete.
-If the hardware command finishes earlier (e.g., `flash_pad` pulses) the
-sequence remains in the resulting colour for the remainder of the hold period
-unless interrupted.  Setting a duration longer than the hardware limit is
-permitted; the decoder clamps to the nearest legal values and treats the
-remaining ticks as dwell time.
+`hold_ticks` defines when the command is considered complete.  If the hardware
+command finishes earlier (e.g., `flash_pad` pulses) the sequence remains in the
+resulting colour for the remainder of the hold period unless interrupted.
+Setting a duration longer than the hardware limit is permitted; the decoder
+clamps to the nearest legal values and treats the remaining ticks as dwell
+time.  When `transition_ticks` is non-zero (or set to the sentinel `0xFFFF` to
+use the track default), the player linearly ramps brightness and colour from the
+current pad state to the new `ColourSpec` before executing the rest of the
+command, enabling smooth overlaps between “notes”.
 
-To convert tempo ticks into the byte ranges accepted by the USB protocol
-(0–255), the player uses the current tempo to obtain milliseconds per tick and
-performs clamping/scaling.  Implementations should document their mapping (e.g.,
-1 tick = 5 ms when converting to `fade_pad`’s `pulse_time`).
+### Colour Specification
+
+All pad opcodes reference colours through a shared encoding so that sequences can mix palette entries and literal RGB values without ambiguity.
+
+```
+ColourSpec := [u8 mode][payload]
+
+mode bit layout:
+  bits 0-4 : palette index (0-31)
+  bit 5    : payload type (0 = palette reference, 1 = literal RGB)
+  bits 6-7 : reserved, set to 0
+
+payload:
+  if bit5 = 0 -> no extra bytes; the index in bits0-4 selects the palette entry
+  if bit5 = 1 -> [u8 r][u8 g][u8 b]
+```
+
+With this encoding, palette entry *n* uses `mode = n` (bit 5 clear).  Literal colours set bit 5 and typically zero the lower bits, e.g., `mode = 0x20` followed by `r`, `g`, `b`.
+
+### Standard 32-colour Palette
+
+The default palette spans the full hue circle plus useful white/neutral values. Encoders may reference entries by index or override specific colours with a `PAL0` chunk. Colours are expressed in sRGB hex for documentation clarity.
+
+| Index | Name            | RGB Hex | Description |
+|------:|-----------------|---------|-------------|
+| 0     | Black           | #000000 | Off/blackout |
+| 1     | White           | #FFFFFF | Neutral white |
+| 2     | Warm White      | #FFD8B0 | Incandescent tint |
+| 3     | Cool White      | #D6F0FF | Cool bluish white |
+| 4     | Deep Red        | #FF0000 | Primary red |
+| 5     | Scarlet         | #FF3300 | Red-orange |
+| 6     | Orange          | #FF6600 | Classic orange |
+| 7     | Amber           | #FF9900 | Warm amber |
+| 8     | Golden Yellow   | #FFCC00 | Bright yellow-orange |
+| 9     | Sun Yellow      | #FFFF00 | Primary yellow |
+| 10    | Lemon           | #CCFF00 | Yellow-green |
+| 11    | Chartreuse      | #99FF00 | Electric yellow-green |
+| 12    | Spring Green    | #66FF00 | Greenish yellow |
+| 13    | Neon Green      | #33FF00 | Vivid green |
+| 14    | Emerald         | #00FF00 | Primary green |
+| 15    | Mint            | #00FF66 | Green-cyan |
+| 16    | Aqua            | #00FFCC | Cyan-leaning green |
+| 17    | Cyan            | #00FFFF | Primary cyan |
+| 18    | Sky Blue        | #00CCFF | Cyan-blue |
+| 19    | Azure           | #0099FF | Bright blue |
+| 20    | Electric Blue   | #0066FF | Saturated blue |
+| 21    | Royal Blue      | #0033FF | Deep blue |
+| 22    | Indigo          | #0000FF | Primary blue/violet |
+| 23    | Violet          | #3300FF | Blue-purple |
+| 24    | Purple          | #6600FF | Purple |
+| 25    | Magenta         | #9900FF | Violet-magenta |
+| 26    | Hot Pink        | #CC00FF | Bright magenta |
+| 27    | Fuchsia         | #FF00FF | Primary magenta |
+| 28    | Rose            | #FF0099 | Magenta-red |
+| 29    | Cerise          | #FF0066 | Pinkish red |
+| 30    | Crimson         | #FF0033 | Deep pink-red |
+| 31    | Warm Red        | #FF1919 | Slightly desaturated red |
+
+The palette order follows increasing hue from red through the spectrum and back to red for predictable indexing.
+
+To convert tempo and transition ticks into the byte ranges accepted by the USB protocol (0–255), the player uses the current tempo to obtain milliseconds per tick and performs clamping/scaling.  Implementations should document their mapping (e.g., how `transition_ticks` map onto `fade_pad`’s `pulse_time`).  Palette indices are converted into RGB using the active table before commands are emitted.
 
 ### Group Actions (`GRP0`)
 
@@ -130,12 +200,11 @@ individual pad events scheduled over the same interval.
 
 Payload format mirrors the pad command:
 
-* `0x20 GroupFade`: `[u16 ramp_ticks, u8 pulses, (colour×3), u16 hold_ticks]`
-* `0x21 GroupFlash`: `[u16 on_ticks, u16 off_ticks, u8 pulses, (colour×3), u16 hold]`
+* `0x20 GroupFade`: `[u16 ramp_ticks, u8 pulses, ((u8 enable, ColourSpec)×3), u16 hold_ticks]`
+* `0x21 GroupFlash`: `[u16 on_ticks, u16 off_ticks, u8 pulses, ((u8 enable, ColourSpec)×3), u16 hold_ticks]`
+* `0x22 GroupSwitch`: `[u16 transition_ticks, ((u8 enable, ColourSpec)×3), u16 hold_ticks]`
 
-Each colour entry is preceded by an enable flag, matching the USB format.
-Players resolve conflicts by prioritising the most recently started command
-(group or pad-specific) at any timestamp.
+Each colour entry carries an enable flag so unused pads may keep their prior state.  When `transition_ticks` fields are non-zero (or 0xFFFF for “use default”) the player performs the same ramping behaviour as individual pad events before applying the shared command.  Players resolve conflicts by prioritising the most recently started command (group or pad-specific) at any timestamp.
 
 ## Audio Track (`AUD0`)
 
@@ -185,9 +254,10 @@ centre pad while the right pad fades in:
 ```
 HEAD: version=1, ticks_per_beat=960, tempo=500000 (120 BPM)
 TEMP: delta=0  -> SetTempo 500000
-PAD0: delta=0  -> FlashColour(on=120, off=120, pulses=4, colour=#FF0000, hold=240)
-       delta=960 -> SwitchColour(#000000, duration=0)
-PAD2: delta=0  -> FadeToColour(ramp=480, pulses=1, colour=#00FF00, hold=960)
+PAL0: override index 4 -> #FF0000 (deep red), index 14 -> #00FF00 (emerald)
+PAD0: delta=0  -> FlashColour(on=120, off=120, pulses=4, colour=palette[4], hold=240)
+       delta=960 -> SwitchColour(transition=0, colour=palette[0], hold=0)
+PAD2: delta=0  -> FadeToColour(ramp=480, pulses=1, colour=palette[14], hold=960)
 ```
 
 ## Extensibility
