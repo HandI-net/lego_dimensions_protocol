@@ -1,10 +1,11 @@
+import base64
 import struct
 from pathlib import Path
 
 import pytest
 
 from lego_dimensions_protocol.gateway import Pad
-from lego_dimensions_protocol.lstf import LSTFProgram, load_lstf
+from lego_dimensions_protocol.lstf import LSTFProgram, TEXTUAL_LSTF_HEADER, load_lstf
 
 
 def _varint(value: int) -> bytes:
@@ -34,6 +35,12 @@ def _build_pad_chunk(opcodes: bytes, pad_index: int = 0) -> bytes:
     return _chunk(f"PAD{pad_index}", opcodes)
 
 
+def _write_textual(path: Path, payload: bytes) -> None:
+    encoded = base64.b64encode(payload).decode("ascii")
+    lines = [encoded[i : i + 76] for i in range(0, len(encoded), 76)]
+    path.write_text("\n".join([TEXTUAL_LSTF_HEADER, *lines, ""]), encoding="ascii")
+
+
 def test_load_simple_switch_track(tmp_path: Path) -> None:
     payload = bytearray()
     payload.extend(_varint(0))  # delta
@@ -45,7 +52,7 @@ def test_load_simple_switch_track(tmp_path: Path) -> None:
     data = b"".join((_build_head_chunk(), _chunk("TEMP", b""), _build_pad_chunk(bytes(payload))))
 
     track_path = tmp_path / "switch.lstf"
-    track_path.write_bytes(data)
+    _write_textual(track_path, data)
 
     program = load_lstf(track_path)
     assert isinstance(program, LSTFProgram)
@@ -85,7 +92,7 @@ def test_multi_pad_track_is_not_generic(tmp_path: Path) -> None:
     )
 
     track_path = tmp_path / "multi.lstf"
-    track_path.write_bytes(data)
+    _write_textual(track_path, data)
 
     program = load_lstf(track_path)
     assert not program.is_generic

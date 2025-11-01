@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 from dataclasses import dataclass
 import logging
 import struct
 from bisect import bisect_right
 from pathlib import Path
-from typing import Dict, Iterable, Iterator, List, Mapping, Optional, Sequence, Tuple
+from typing import Dict, Iterator, List, Mapping, Optional, Sequence, Tuple
 
 from .gateway import Pad
 
@@ -16,6 +18,12 @@ LOGGER = logging.getLogger(__name__)
 
 class LSTFError(RuntimeError):
     """Raised when an LSTF file cannot be parsed."""
+
+
+TEXTUAL_LSTF_HEADER = "LSTF-TEXT 1"
+_TEXTUAL_PREFIX = "LSTF-TEXT"
+_TEXTUAL_VERSION = "1"
+_TEXTUAL_PREFIX_BYTES = _TEXTUAL_PREFIX.encode("ascii")
 
 
 @dataclass(frozen=True)
@@ -122,9 +130,53 @@ def load_lstf(path: str | Path) -> LSTFProgram:
     """Load *path* and return a parsed :class:`LSTFProgram`."""
 
     file_path = Path(path)
-    data = file_path.read_bytes()
+    raw = file_path.read_bytes()
+    data = _normalise_lstf_bytes(raw, source=file_path)
     parser = _LSTFParser(data, source=file_path)
     return parser.parse()
+
+
+def _normalise_lstf_bytes(data: bytes, *, source: Path | None = None) -> bytes:
+    """Return binary LSTF payload from raw file *data*.
+
+    Modern repositories store tracks in an ASCII transport wrapper to ensure
+    they remain text-friendly for VCS systems.  The wrapper begins with a
+    ``LSTF-TEXT`` header and base64 payload.  Older tracks may remain in their
+    original binary form; both encodings are supported transparently.
+    """
+
+    if data.startswith(_TEXTUAL_PREFIX_BYTES):
+        return _decode_textual_lstf(data, source=source)
+    return data
+
+
+def _decode_textual_lstf(data: bytes, *, source: Path | None = None) -> bytes:
+    try:
+        text = data.decode("ascii")
+    except UnicodeDecodeError as exc:
+        raise LSTFError("Text-encoded LSTF files must be ASCII.") from exc
+
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if not lines:
+        raise LSTFError("Text-encoded LSTF file is empty.")
+
+    header = lines[0].split()
+    if len(header) != 2 or header[0] != _TEXTUAL_PREFIX:
+        raise LSTFError("Missing LSTF-TEXT header in text-encoded file.")
+    version = header[1]
+    if version != _TEXTUAL_VERSION:
+        raise LSTFError(f"Unsupported text LSTF version {version!r}.")
+
+    encoded_chunks = [line for line in lines[1:] if not line.startswith("#")]
+    if not encoded_chunks:
+        raise LSTFError("Text-encoded LSTF file does not contain payload data.")
+
+    payload = "".join(encoded_chunks)
+    try:
+        return base64.b64decode(payload, validate=True)
+    except binascii.Error as exc:
+        location = f" ({source})" if source else ""
+        raise LSTFError(f"Invalid base64 payload in text LSTF{location}.") from exc
 
 
 class _LSTFParser:
@@ -526,5 +578,12 @@ def _seconds_to_unit(value: float) -> int:
     return max(1, min(255, scaled))
 
 
-__all__ = ["LSTFProgram", "LSTFError", "PadCommand", "PadTrack", "load_lstf"]
+__all__ = [
+    "LSTFProgram",
+    "LSTFError",
+    "PadCommand",
+    "PadTrack",
+    "load_lstf",
+    "TEXTUAL_LSTF_HEADER",
+]
 
