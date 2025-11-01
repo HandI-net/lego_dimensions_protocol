@@ -311,10 +311,15 @@ class Gateway:
                 MAX_PACKET_LENGTH,
                 timeout=read_timeout,
             )
+        except self._usb_core.USBTimeoutError:  # pragma: no cover - USB backend specific
+            # Some backends raise a dedicated timeout exception when no packet is
+            # available. Treat this the same as a regular "no data" result.
+            return None
         except self._usb_core.USBError as exc:  # pragma: no cover - USB backend specific
-            if getattr(exc, "errno", None) in {None, 110}:
-                # libusb returns errno 110 (operation timed out) when no packet is
-                # available. Treat this as a normal "no data" event.
+            if getattr(exc, "errno", None) in {None, 60, 110}:
+                # Different libusb builds report ETIMEDOUT as either errno 60 (macOS)
+                # or 110 (Linux). If the backend indicates a timeout, report no data
+                # instead of bubbling the error up to callers.
                 return None
             raise
 
