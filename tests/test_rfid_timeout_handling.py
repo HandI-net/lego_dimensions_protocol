@@ -32,11 +32,11 @@ def test_tagtracker_logs_timeout_when_gateway_returns_none(caplog):
     gateway = _TimeoutGateway()
     tracker = TagTracker(gateway, poll_timeout=123, auto_start=False)
 
-    with caplog.at_level(logging.INFO):
+    with caplog.at_level(logging.DEBUG):
         assert tracker.poll_once() is None
 
     assert any(
-        record.levelno == logging.INFO
+        record.levelno == logging.DEBUG
         and "RFID poll timed out after 123ms" in record.getMessage()
         for record in caplog.records
     )
@@ -47,11 +47,12 @@ def test_tagtracker_swallows_gateway_timeout_exception(caplog):
     gateway = _TimeoutGateway(raises=timeout_exc)
     tracker = TagTracker(gateway, poll_timeout=77, auto_start=False)
 
-    with caplog.at_level(logging.INFO):
+    with caplog.at_level(logging.DEBUG):
         assert tracker.poll_once() is None
 
     assert any(
-        "RFID poll timed out after 77ms" in record.getMessage()
+        record.levelno == logging.DEBUG
+        and "RFID poll timed out after 77ms" in record.getMessage()
         for record in caplog.records
     )
 
