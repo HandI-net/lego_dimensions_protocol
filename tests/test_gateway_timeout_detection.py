@@ -43,6 +43,10 @@ class _DummyUSBError(Exception):
         ),
         (
             SimpleNamespace(USBTimeoutError=_DummyUSBTimeoutError, USBError=_DummyUSBError),
+            _DummyUSBError(errno="60"),
+        ),
+        (
+            SimpleNamespace(USBTimeoutError=_DummyUSBTimeoutError, USBError=_DummyUSBError),
             _DummyUSBError(errno=None, backend_error_code=_LIBUSB_TIMEOUT_CODE),
         ),
         (

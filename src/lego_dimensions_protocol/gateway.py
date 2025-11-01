@@ -351,8 +351,13 @@ class Gateway:
 
             usb_error = getattr(usb_core, "USBError", None)
             if usb_error and isinstance(exc, usb_error):
-                errno = getattr(exc, "errno", None)
-                if errno in _TIMEOUT_ERRNOS or errno is None:
+                errno_value = getattr(exc, "errno", None)
+                if isinstance(errno_value, str):
+                    try:
+                        errno_value = int(errno_value, 0)
+                    except ValueError:
+                        errno_value = None
+                if errno_value in _TIMEOUT_ERRNOS or errno_value is None:
                     # Different libusb builds report ``ETIMEDOUT`` using different errno
                     # values. Normalise these to a ``None`` result for callers.
                     return True
