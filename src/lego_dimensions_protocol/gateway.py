@@ -176,6 +176,7 @@ class Gateway:
         self._usb_core: Any | None = None
         self._usb_util: Any | None = None
         self._reattach_driver = False
+        self._reported_usb_messages: set[str] = set()
 
         self.connect()
         if initialize:
@@ -305,25 +306,64 @@ class Gateway:
             raise RuntimeError("Gateway not connected. Call connect() before reading packets.")
 
         read_timeout = self.timeout if timeout is None else timeout
+        usb_timeout_type = getattr(self._usb_core, "USBTimeoutError", None)
         try:
             data = self.dev.read(
                 self.read_endpoint,
                 MAX_PACKET_LENGTH,
                 timeout=read_timeout,
             )
-        except self._usb_core.USBTimeoutError:  # pragma: no cover - USB backend specific
-            # Some backends raise a dedicated timeout exception when no packet is
-            # available. Treat this the same as a regular "no data" result.
-            return None
-        except self._usb_core.USBError as exc:  # pragma: no cover - USB backend specific
-            if getattr(exc, "errno", None) in {None, 60, 110}:
-                # Different libusb builds report ETIMEDOUT as either errno 60 (macOS)
-                # or 110 (Linux). If the backend indicates a timeout, report no data
-                # instead of bubbling the error up to callers.
+        except Exception as exc:  # pragma: no cover - USB backend specific
+            if usb_timeout_type and isinstance(exc, usb_timeout_type):
+                self._log_usb_exception(
+                    "Timed out waiting for data from the LEGO Dimensions portal; still waiting",
+                    exc,
+                    level=logging.INFO,
+                )
                 return None
+            if isinstance(exc, self._usb_core.USBError):
+                timeout_codes = {
+                    value
+                    for value in (
+                        getattr(self._usb_core, "LIBUSB_ERROR_TIMEOUT", None),
+                        60,
+                        110,
+                    )
+                    if value is not None
+                }
+                timeout_codes.add(None)
+                if getattr(exc, "errno", None) in timeout_codes:
+                    self._log_usb_exception(
+                        "Timed out waiting for data from the LEGO Dimensions portal; still waiting",
+                        exc,
+                        level=logging.INFO,
+                    )
+                    return None
+                self._log_usb_exception(
+                    "USB error while reading from the LEGO Dimensions portal",
+                    exc,
+                )
             raise
 
         return tuple(int(byte) & 0xFF for byte in data)
+
+    def _log_usb_exception(
+        self,
+        message: str,
+        exc: BaseException,
+        *,
+        level: int = logging.WARNING,
+    ) -> None:
+        if message in self._reported_usb_messages:
+            return
+        self._reported_usb_messages.add(message)
+        LOGGER.log(
+            level,
+            "%s: %s",
+            message,
+            exc,
+            exc_info=(type(exc), exc, exc.__traceback__),
+        )
 
     def iter_packets(self, *, timeout: int | None = None) -> Iterator[Tuple[int, ...]]:
         """Yield packets from the portal as they arrive."""
