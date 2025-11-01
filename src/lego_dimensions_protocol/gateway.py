@@ -152,6 +152,24 @@ def _fill_to_packet(message: Sequence[int]) -> Tuple[int, ...]:
     return tuple(padded)
 
 
+def _coerce_errno(value: Any) -> Optional[int]:
+    """Attempt to normalise an errno-like attribute to an integer."""
+
+    if value is None:
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        try:
+            return int(value, 0)
+        except ValueError:
+            return None
+    try:
+        return int(value)  # Handles ctypes and enum values.
+    except (TypeError, ValueError):  # pragma: no cover - defensive
+        return None
+
+
 def _require_usb() -> Tuple[Any, Any]:
     try:
         import usb.core  # type: ignore[import-not-found]
@@ -351,12 +369,7 @@ class Gateway:
 
             usb_error = getattr(usb_core, "USBError", None)
             if usb_error and isinstance(exc, usb_error):
-                errno_value = getattr(exc, "errno", None)
-                if isinstance(errno_value, str):
-                    try:
-                        errno_value = int(errno_value, 0)
-                    except ValueError:
-                        errno_value = None
+                errno_value = _coerce_errno(getattr(exc, "errno", None))
                 if errno_value in _TIMEOUT_ERRNOS or errno_value is None:
                     # Different libusb builds report ``ETIMEDOUT`` using different errno
                     # values. Normalise these to a ``None`` result for callers.
@@ -372,7 +385,7 @@ class Gateway:
         if exc.__class__.__name__ == "USBTimeoutError":
             return True
 
-        errno = getattr(exc, "errno", None)
+        errno = _coerce_errno(getattr(exc, "errno", None))
         if errno in _TIMEOUT_ERRNOS:  # pragma: no cover - backend specific
             # Backends that surface ``LIBUSB_ERROR_TIMEOUT`` without using the
             # canonical ``USBError`` hierarchy still populate ``errno`` with an

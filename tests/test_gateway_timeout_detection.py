@@ -1,8 +1,10 @@
 """Tests for normalising backend timeout errors in the gateway."""
 
 from pathlib import Path
-from types import SimpleNamespace
 import sys
+from types import SimpleNamespace
+
+import ctypes
 
 import pytest
 
@@ -44,6 +46,10 @@ class _DummyUSBError(Exception):
         (
             SimpleNamespace(USBTimeoutError=_DummyUSBTimeoutError, USBError=_DummyUSBError),
             _DummyUSBError(errno="60"),
+        ),
+        (
+            SimpleNamespace(USBTimeoutError=_DummyUSBTimeoutError, USBError=_DummyUSBError),
+            _DummyUSBError(errno=ctypes.c_int(60)),
         ),
         (
             SimpleNamespace(USBTimeoutError=_DummyUSBTimeoutError, USBError=_DummyUSBError),
