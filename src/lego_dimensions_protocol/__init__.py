@@ -16,6 +16,7 @@ from .gateway import Gateway, Pad, PortalNotFoundError, RGBColor
 from .morse import demo as morse_demo, send_character, send_text
 from .rfid import TagEvent, TagEventType, TagTracker, watch_pads
 from .rfid_demo import LightAction, run_rfid_demo
+from .rfid_read import read_single_tag
 
 __all__ = [
     "Gateway",
@@ -28,6 +29,7 @@ __all__ = [
     "watch_pads",
     "LightAction",
     "run_rfid_demo",
+    "read_single_tag",
     "send_character",
     "send_text",
     "morse_demo",
