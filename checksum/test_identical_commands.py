@@ -9,9 +9,16 @@
 # Licence:     <your licence>
 #-------------------------------------------------------------------------------
 
+import pytest
+
+pytest.skip(
+    "requires direct access to the LEGO Dimensions portal hardware",
+    allow_module_level=True,
+)
+
+import time
 import usb.core
 import usb.util
-import time
 
 
 
