@@ -74,6 +74,14 @@ _PALETTE: Sequence[RGBColor] = (
 
 _PAD_SEQUENCE: Sequence[Pad] = (Pad.LEFT, Pad.CENTRE, Pad.RIGHT)
 _PAD_TO_SEQUENCE_INDEX: dict[Pad, int] = {pad: index for index, pad in enumerate(_PAD_SEQUENCE)}
+# ``fade_pads`` expects its entries ordered as centre, left, then right. Keep a separate
+# mapping for that hardware-specific ordering so group fades stay confined to the pad that
+# triggered them.
+_PAD_TO_GROUP_INDEX: dict[Pad, int] = {
+    Pad.CENTRE: 0,
+    Pad.LEFT: 1,
+    Pad.RIGHT: 2,
+}
 
 
 def _initial_cycle(gateway: Gateway, *, pause: float = 0.35) -> None:
@@ -217,7 +225,12 @@ class _ActiveShow:
                         colour=action.colour,
                     )
                 elif action.effect is LightEffect.GROUP_FADE:
-                    pad_index = _PAD_TO_SEQUENCE_INDEX.get(action.pad, 0)
+                    pad_index = _PAD_TO_GROUP_INDEX.get(action.pad)
+                    if pad_index is None:
+                        LOGGER.debug(
+                            "Skipping group fade for unsupported pad %s", action.pad
+                        )
+                        continue
                     pad_entries: list[tuple[int, int, RGBColor] | None] = [None, None, None]
                     pad_entries[pad_index] = (
                         action.pulse_time or 1,
