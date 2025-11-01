@@ -46,8 +46,8 @@ for bRequest in range(256):
     try:
         #ctrl_transfer( bmRequestType, bmRequest, wValue, wIndex, nBytes)
         ret = dev.ctrl_transfer(0x00, bRequest, 0, 0, 1)
-        print "bRequest ",bRequest
-        print ret
+        print("bRequest ",bRequest)
+        print(ret)
     except:
         # failed to get data for this request
         pass

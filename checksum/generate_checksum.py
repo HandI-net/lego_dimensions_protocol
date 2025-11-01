@@ -90,7 +90,7 @@ def test_xor_parity():
     result = 0
     for word in packet:
         result = result ^ word
-    print hex(result)
+    print(hex(result))
 
 
 def bulk_xor():
@@ -407,8 +407,8 @@ def test_expected_checksums():
                 print("current_packet: "+repr(current_packet))
                 # Test if it worked
                 if (expected_checksum == generated_checksum):
-                    print "Match!"
-                    print repr(locals())
+                    print("Match!")
+                    print(repr(locals()))
                     #assert(current_packet == original_packet)
                     #assert(False)# We found it
     return

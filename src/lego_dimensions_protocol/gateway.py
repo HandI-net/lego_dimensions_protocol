@@ -311,19 +311,38 @@ class Gateway:
                 MAX_PACKET_LENGTH,
                 timeout=read_timeout,
             )
-        except self._usb_core.USBTimeoutError:  # pragma: no cover - USB backend specific
-            # Some backends raise a dedicated timeout exception when no packet is
-            # available. Treat this the same as a regular "no data" result.
-            return None
-        except self._usb_core.USBError as exc:  # pragma: no cover - USB backend specific
-            if getattr(exc, "errno", None) in {None, 60, 110}:
-                # Different libusb builds report ETIMEDOUT as either errno 60 (macOS)
-                # or 110 (Linux). If the backend indicates a timeout, report no data
-                # instead of bubbling the error up to callers.
+        except Exception as exc:  # pragma: no cover - USB backend specific
+            if self._is_timeout_error(exc):
+                # Treat backend-specific timeout signals the same way as a "no data"
+                # result so callers can simply poll for packets.
                 return None
             raise
 
         return tuple(int(byte) & 0xFF for byte in data)
+
+    def _is_timeout_error(self, exc: Exception) -> bool:
+        """Return ``True`` when *exc* indicates that no data was available."""
+
+        if isinstance(exc, TimeoutError):  # pragma: no cover - defensive
+            return True
+
+        usb_core = self._usb_core
+        if usb_core is None:  # pragma: no cover - defensive
+            return False
+
+        timeout_exc = getattr(usb_core, "USBTimeoutError", None)
+        if timeout_exc and isinstance(exc, timeout_exc):
+            return True
+
+        usb_error = getattr(usb_core, "USBError", None)
+        if usb_error and isinstance(exc, usb_error):
+            errno = getattr(exc, "errno", None)
+            if errno in {None, 60, 110}:
+                # Different libusb builds report ``ETIMEDOUT`` using different errno
+                # values. Normalise these to a ``None`` result for callers.
+                return True
+
+        return False
 
     def iter_packets(self, *, timeout: int | None = None) -> Iterator[Tuple[int, ...]]:
         """Yield packets from the portal as they arrive."""
