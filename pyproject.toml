@@ -36,3 +36,4 @@ where = ["src"]
 
 [project.scripts]
 lego-dimensions-demo = "lego_dimensions_protocol.demo:main"
+lego-dimensions-rfid-demo = "lego_dimensions_protocol.rfid_demo:main"

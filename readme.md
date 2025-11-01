@@ -17,6 +17,8 @@ for integrating the portal with contemporary automation projects.
 - Morse code helpers for quickly prototyping light-based messaging demos.
 - Optional command line demo (`lego-dimensions-demo`) showcasing the API and
   providing a quick smoke test for new installations.
+- Interactive RFID light-show demo (`lego-dimensions-rfid-demo`) that maps tag
+  identifiers to repeatable lighting sequences.
 - Type hints and a `py.typed` marker for seamless integration with static type
   checkers.
 
@@ -65,6 +67,17 @@ lego-dimensions-demo --tests switch fade --pause 1.5 --log-level DEBUG
 
 Use `--vendor-id` and `--product-id` if you need to target a specific hardware
 revision.
+
+To explore the RFID helper functionality, launch the dedicated light show:
+
+```bash
+lego-dimensions-rfid-demo --log-level DEBUG
+```
+
+The script cycles through the pads while initialising, then waits for tags.  As
+soon as a tag is detected the UID is converted into a deterministic colour and
+timing pattern that loops until the tag is removed, at which point the pad is
+blanked again.
 
 ## Development
 
