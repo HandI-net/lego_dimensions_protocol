@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import IntEnum
+import errno
 import logging
 from typing import TYPE_CHECKING, Any, Iterator, Optional, Sequence, Tuple
 
@@ -22,6 +23,22 @@ _CHECKSUM_LENGTH = 1
 _DEFAULT_WRITE_ENDPOINT = 0x01
 _DEFAULT_READ_ENDPOINT = 0x81
 _DEFAULT_INTERFACE = 0
+
+_LIBUSB_TIMEOUT_CODE = -7
+_TIMEOUT_ERRNOS = {
+    value
+    for value in (
+        getattr(errno, "ETIMEDOUT", None),
+        getattr(errno, "ETIME", None),
+        # macOS surfaces USB timeouts as ``ETIMEDOUT`` (60) while Linux typically
+        # reports 110. ``WSAETIMEDOUT`` (10060) covers Windows backends.
+        60,
+        110,
+        62,
+        10060,
+    )
+    if value is not None
+}
 
 DEFAULT_VENDOR_ID = 0x0E6F
 DEFAULT_PRODUCT_IDS: Tuple[int, ...] = (
@@ -133,6 +150,24 @@ def _fill_to_packet(message: Sequence[int]) -> Tuple[int, ...]:
     while len(padded) < MAX_PACKET_LENGTH:
         padded.append(0)
     return tuple(padded)
+
+
+def _coerce_errno(value: Any) -> Optional[int]:
+    """Attempt to normalise an errno-like attribute to an integer."""
+
+    if value is None:
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        try:
+            return int(value, 0)
+        except ValueError:
+            return None
+    try:
+        return int(value)  # Handles ctypes and enum values.
+    except (TypeError, ValueError):  # pragma: no cover - defensive
+        return None
 
 
 def _require_usb() -> Tuple[Any, Any]:
@@ -311,19 +346,108 @@ class Gateway:
                 MAX_PACKET_LENGTH,
                 timeout=read_timeout,
             )
-        except self._usb_core.USBTimeoutError:  # pragma: no cover - USB backend specific
-            # Some backends raise a dedicated timeout exception when no packet is
-            # available. Treat this the same as a regular "no data" result.
-            return None
-        except self._usb_core.USBError as exc:  # pragma: no cover - USB backend specific
-            if getattr(exc, "errno", None) in {None, 60, 110}:
-                # Different libusb builds report ETIMEDOUT as either errno 60 (macOS)
-                # or 110 (Linux). If the backend indicates a timeout, report no data
-                # instead of bubbling the error up to callers.
+        except Exception as exc:  # pragma: no cover - USB backend specific
+            is_timeout = self.is_timeout_error(exc)
+            self._log_usb_exception(
+                "read",
+                exc,
+                timeout=read_timeout,
+                is_timeout=is_timeout,
+            )
+            if is_timeout:
+                # Treat backend-specific timeout signals the same way as a "no data"
+                # result so callers can simply poll for packets.
                 return None
             raise
 
         return tuple(int(byte) & 0xFF for byte in data)
+
+    def is_timeout_error(self, exc: Exception) -> bool:
+        """Return ``True`` when *exc* indicates that no data was available."""
+
+        if isinstance(exc, TimeoutError):  # pragma: no cover - defensive
+            return True
+
+        usb_core = self._usb_core
+        if usb_core is not None:
+            timeout_exc = getattr(usb_core, "USBTimeoutError", None)
+            if timeout_exc and isinstance(exc, timeout_exc):
+                return True
+
+            usb_error = getattr(usb_core, "USBError", None)
+            if usb_error and isinstance(exc, usb_error):
+                errno_value = _coerce_errno(getattr(exc, "errno", None))
+                if errno_value in _TIMEOUT_ERRNOS or errno_value is None:
+                    # Different libusb builds report ``ETIMEDOUT`` using different errno
+                    # values. Normalise these to a ``None`` result for callers.
+                    return True
+
+                backend_code = getattr(exc, "backend_error_code", None)
+                if backend_code == _LIBUSB_TIMEOUT_CODE:
+                    return True
+
+        # Some PyUSB backends raise their own ``USBTimeoutError`` subclasses that are
+        # not exported through ``usb.core``. Fall back to a name-based check so these
+        # still register as benign timeouts instead of surfacing to callers.
+        if exc.__class__.__name__ == "USBTimeoutError":
+            return True
+
+        errno = _coerce_errno(getattr(exc, "errno", None))
+        if errno in _TIMEOUT_ERRNOS:  # pragma: no cover - backend specific
+            # Backends that surface ``LIBUSB_ERROR_TIMEOUT`` without using the
+            # canonical ``USBError`` hierarchy still populate ``errno`` with an
+            # OS-specific timeout code. Normalise those to a ``None`` result so the
+            # poller keeps waiting for real packets.
+            return True
+
+        backend_code = getattr(exc, "backend_error_code", None)
+        if backend_code == _LIBUSB_TIMEOUT_CODE:  # pragma: no cover - backend specific
+            return True
+
+        strerror = getattr(exc, "strerror", "")
+        if isinstance(strerror, str) and "timed out" in strerror.lower():
+            return True
+
+        message = str(exc)
+        if "timed out" in message.lower():
+            return True
+
+        return False
+
+    # Backwards compatible alias for callers that reached into the private helper
+    # before :meth:`is_timeout_error` existed.
+    _is_timeout_error = is_timeout_error
+
+    def _log_usb_exception(
+        self,
+        operation: str,
+        exc: Exception,
+        *,
+        timeout: int | None,
+        is_timeout: bool,
+    ) -> None:
+        """Emit a structured log describing a USB backend failure."""
+
+        errno_value = getattr(exc, "errno", None)
+        backend_code = getattr(exc, "backend_error_code", None)
+        strerror = getattr(exc, "strerror", None)
+
+        timeout_note = "timeout" if is_timeout else "error"
+        level = logging.DEBUG if is_timeout else logging.WARNING
+
+        LOGGER.log(
+            level,
+            "USB %s %s after %sms (%s: errno=%r backend_error_code=%r "
+            "strerror=%r message=%s)",
+            operation,
+            timeout_note,
+            timeout,
+            exc.__class__.__name__,
+            errno_value,
+            backend_code,
+            strerror,
+            exc,
+        )
 
     def iter_packets(self, *, timeout: int | None = None) -> Iterator[Tuple[int, ...]]:
         """Yield packets from the portal as they arrive."""

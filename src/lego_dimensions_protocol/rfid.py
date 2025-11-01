@@ -56,6 +56,7 @@ class TagTracker:
 
         self._stop_event = Event()
         self._thread: Optional[Thread] = None
+        self._timeout_streak = 0
 
         if auto_start:
             self.start()
@@ -112,8 +113,20 @@ class TagTracker:
                 yield event
 
     def poll_once(self) -> Optional[TagEvent]:
-        packet = self._gateway.read_packet(timeout=self.poll_timeout)
-        if packet is None or len(packet) < 12:
+        try:
+            packet = self._gateway.read_packet(timeout=self.poll_timeout)
+        except Exception as exc:  # pragma: no cover - USB backend specific
+            timeout_checker = getattr(self._gateway, "is_timeout_error", None)
+            if callable(timeout_checker) and timeout_checker(exc):
+                return self._record_timeout()
+            raise
+
+        if packet is None:
+            return self._record_timeout()
+
+        self._timeout_streak = 0
+
+        if len(packet) < 12:
             return None
         if packet[0] != 0x56:
             return None
@@ -149,6 +162,15 @@ class TagTracker:
     def _run(self) -> None:
         while not self._stop_event.is_set():
             self.poll_once()
+
+    def _record_timeout(self) -> None:
+        if self._timeout_streak == 0:
+            LOGGER.info(
+                "RFID poll timed out after %sms; waiting for tag activity",
+                self.poll_timeout,
+            )
+        self._timeout_streak += 1
+        return None
 
 
 def watch_pads(tag_colours: Optional[Dict[str, Sequence[int]]] = None) -> None:
