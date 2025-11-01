@@ -12,6 +12,7 @@ stable and easy to integrate with contemporary Python software.
 
 from __future__ import annotations
 
+from .characters import CharacterInfo, get_character, iter_characters
 from .gateway import Gateway, Pad, PortalNotFoundError, RGBColor
 from .morse import demo as morse_demo, send_character, send_text
 from .rfid import TagEvent, TagEventType, TagTracker, watch_pads
@@ -22,6 +23,9 @@ __all__ = [
     "Pad",
     "PortalNotFoundError",
     "RGBColor",
+    "CharacterInfo",
+    "get_character",
+    "iter_characters",
     "TagTracker",
     "TagEvent",
     "TagEventType",
