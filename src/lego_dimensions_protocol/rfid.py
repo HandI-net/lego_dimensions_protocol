@@ -165,7 +165,7 @@ class TagTracker:
 
     def _record_timeout(self) -> None:
         if self._timeout_streak == 0:
-            LOGGER.info(
+            LOGGER.debug(
                 "RFID poll timed out after %sms; waiting for tag activity",
                 self.poll_timeout,
             )
