@@ -13,7 +13,21 @@ stable and easy to integrate with contemporary Python software.
 from __future__ import annotations
 
 from .gateway import Gateway, Pad, PortalNotFoundError, RGBColor
+from .morse import demo as morse_demo, send_character, send_text
+from .rfid import TagEvent, TagEventType, TagTracker, watch_pads
 
-__all__ = ["Gateway", "Pad", "PortalNotFoundError", "RGBColor"]
+__all__ = [
+    "Gateway",
+    "Pad",
+    "PortalNotFoundError",
+    "RGBColor",
+    "TagTracker",
+    "TagEvent",
+    "TagEventType",
+    "watch_pads",
+    "send_character",
+    "send_text",
+    "morse_demo",
+]
 
 __version__ = "0.1.0"

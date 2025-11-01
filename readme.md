@@ -12,6 +12,9 @@ for integrating the portal with contemporary automation projects.
   handles USB discovery, checksum generation and packet construction.
 - Convenience helpers for the common lighting commands: switching, fading and
   flashing pads individually or as a group.
+- RFID tag tracking utilities with event callbacks and a backwards compatible
+  `tagtracker.py` wrapper.
+- Morse code helpers for quickly prototyping light-based messaging demos.
 - Optional command line demo (`lego-dimensions-demo`) showcasing the API and
   providing a quick smoke test for new installations.
 - Type hints and a `py.typed` marker for seamless integration with static type
@@ -34,21 +37,22 @@ for Windows install [libusb](https://libusb.info/)).
 ## Quickstart
 
 ```python
-from lego_dimensions_protocol import Gateway, Pad, RGBColor
+from lego_dimensions_protocol import Gateway, Pad, RGBColor, TagTracker
 
 with Gateway() as portal:
     portal.switch_pad(Pad.CENTRE, RGBColor(255, 0, 0))
-    portal.flash_pad(
-        Pad.ALL,
-        on_length=10,
-        off_length=20,
-        pulse_count=100,
-        colour=RGBColor(0, 0, 255),
-    )
+
+with TagTracker() as tracker:
+    for event in tracker.iter_events():
+        if event.removed:
+            print(f"Tag {event.uid} removed")
+        else:
+            print(f"Tag {event.uid} placed on {event.pad.name}")
 ```
 
 The gateway automatically disconnects and reattaches the kernel driver when
-used as a context manager.
+used as a context manager.  The tracker builds on the same gateway and provides
+high level events for the RFID reader.
 
 ## Command Line Demo
 

@@ -7,8 +7,23 @@ from typing import Sequence
 
 from lego_dimensions_protocol.demo import main as demo_main
 from lego_dimensions_protocol.gateway import Gateway, Pad, PortalNotFoundError, RGBColor
+from lego_dimensions_protocol.morse import demo as morse_demo, send_character, send_text
+from lego_dimensions_protocol.rfid import TagEvent, TagEventType, TagTracker, watch_pads
 
-__all__ = ["Gateway", "Pad", "PortalNotFoundError", "RGBColor", "main"]
+__all__ = [
+    "Gateway",
+    "Pad",
+    "PortalNotFoundError",
+    "RGBColor",
+    "TagTracker",
+    "TagEvent",
+    "TagEventType",
+    "watch_pads",
+    "send_character",
+    "send_text",
+    "morse_demo",
+    "main",
+]
 
 
 def main(argv: Sequence[str] | None = None) -> int:

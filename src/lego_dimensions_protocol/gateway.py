@@ -19,7 +19,8 @@ else:  # pragma: no cover - runtime fallback
 
 MAX_PACKET_LENGTH = 32
 _CHECKSUM_LENGTH = 1
-_DEFAULT_ENDPOINT = 0x01
+_DEFAULT_WRITE_ENDPOINT = 0x01
+_DEFAULT_READ_ENDPOINT = 0x81
 _DEFAULT_INTERFACE = 0
 
 DEFAULT_VENDOR_ID = 0x0E6F
@@ -155,7 +156,8 @@ class Gateway:
         vendor_id: int = DEFAULT_VENDOR_ID,
         product_ids: Sequence[int] | None = DEFAULT_PRODUCT_IDS,
         interface: int = _DEFAULT_INTERFACE,
-        endpoint: int = _DEFAULT_ENDPOINT,
+        endpoint: int = _DEFAULT_WRITE_ENDPOINT,
+        read_endpoint: int = _DEFAULT_READ_ENDPOINT,
         timeout: int | None = 5000,
         initialize: bool = True,
         auto_detach: bool = True,
@@ -165,6 +167,7 @@ class Gateway:
         self.product_ids = tuple(product_ids) if product_ids else ()
         self.interface = interface
         self.endpoint = endpoint
+        self.read_endpoint = read_endpoint
         self.timeout = timeout
         self.auto_detach = auto_detach
         self._startup_sequence = tuple(startup_sequence)
@@ -282,6 +285,49 @@ class Gateway:
     def send_command(self, command: Sequence[int]) -> None:
         packet = self.convert_command_to_packet(command)
         self.send_packet(packet)
+
+    def read_packet(self, *, timeout: int | None = None) -> Optional[Tuple[int, ...]]:
+        """Read a single 32-byte packet from the portal.
+
+        Parameters
+        ----------
+        timeout:
+            Override the default gateway timeout for this read in milliseconds.
+
+        Returns
+        -------
+        Optional[Tuple[int, ...]]
+            A tuple containing the packet bytes when data is available. ``None``
+            is returned when the call times out without receiving data.
+        """
+
+        if self.dev is None or self._usb_core is None:
+            raise RuntimeError("Gateway not connected. Call connect() before reading packets.")
+
+        read_timeout = self.timeout if timeout is None else timeout
+        try:
+            data = self.dev.read(
+                self.read_endpoint,
+                MAX_PACKET_LENGTH,
+                timeout=read_timeout,
+            )
+        except self._usb_core.USBError as exc:  # pragma: no cover - USB backend specific
+            if getattr(exc, "errno", None) in {None, 110}:
+                # libusb returns errno 110 (operation timed out) when no packet is
+                # available. Treat this as a normal "no data" event.
+                return None
+            raise
+
+        return tuple(int(byte) & 0xFF for byte in data)
+
+    def iter_packets(self, *, timeout: int | None = None) -> Iterator[Tuple[int, ...]]:
+        """Yield packets from the portal as they arrive."""
+
+        while True:
+            packet = self.read_packet(timeout=timeout)
+            if packet is None:
+                continue
+            yield packet
 
     def blank_pads(self) -> None:
         self.switch_pad(Pad.ALL, RGBColor(0, 0, 0))
