@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import IntEnum
+import errno
 import logging
 from typing import TYPE_CHECKING, Any, Iterator, Optional, Sequence, Tuple
 
@@ -22,6 +23,22 @@ _CHECKSUM_LENGTH = 1
 _DEFAULT_WRITE_ENDPOINT = 0x01
 _DEFAULT_READ_ENDPOINT = 0x81
 _DEFAULT_INTERFACE = 0
+
+_LIBUSB_TIMEOUT_CODE = -7
+_TIMEOUT_ERRNOS = {
+    value
+    for value in (
+        getattr(errno, "ETIMEDOUT", None),
+        getattr(errno, "ETIME", None),
+        # macOS surfaces USB timeouts as ``ETIMEDOUT`` (60) while Linux typically
+        # reports 110. ``WSAETIMEDOUT`` (10060) covers Windows backends.
+        60,
+        110,
+        62,
+        10060,
+    )
+    if value is not None
+}
 
 DEFAULT_VENDOR_ID = 0x0E6F
 DEFAULT_PRODUCT_IDS: Tuple[int, ...] = (
@@ -335,9 +352,13 @@ class Gateway:
             usb_error = getattr(usb_core, "USBError", None)
             if usb_error and isinstance(exc, usb_error):
                 errno = getattr(exc, "errno", None)
-                if errno in {None, 60, 110}:
+                if errno in _TIMEOUT_ERRNOS or errno is None:
                     # Different libusb builds report ``ETIMEDOUT`` using different errno
                     # values. Normalise these to a ``None`` result for callers.
+                    return True
+
+                backend_code = getattr(exc, "backend_error_code", None)
+                if backend_code == _LIBUSB_TIMEOUT_CODE:
                     return True
 
         # Some PyUSB backends raise their own ``USBTimeoutError`` subclasses that are
@@ -347,15 +368,23 @@ class Gateway:
             return True
 
         errno = getattr(exc, "errno", None)
-        if errno in {60, 110}:  # pragma: no cover - backend specific
+        if errno in _TIMEOUT_ERRNOS:  # pragma: no cover - backend specific
             # Backends that surface ``LIBUSB_ERROR_TIMEOUT`` without using the
             # canonical ``USBError`` hierarchy still populate ``errno`` with an
             # OS-specific timeout code. Normalise those to a ``None`` result so the
             # poller keeps waiting for real packets.
             return True
 
+        backend_code = getattr(exc, "backend_error_code", None)
+        if backend_code == _LIBUSB_TIMEOUT_CODE:  # pragma: no cover - backend specific
+            return True
+
         strerror = getattr(exc, "strerror", "")
         if isinstance(strerror, str) and "timed out" in strerror.lower():
+            return True
+
+        message = str(exc)
+        if "timed out" in message.lower():
             return True
 
         return False
