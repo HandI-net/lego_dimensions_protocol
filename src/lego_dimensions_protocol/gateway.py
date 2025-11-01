@@ -327,20 +327,24 @@ class Gateway:
             return True
 
         usb_core = self._usb_core
-        if usb_core is None:  # pragma: no cover - defensive
-            return False
-
-        timeout_exc = getattr(usb_core, "USBTimeoutError", None)
-        if timeout_exc and isinstance(exc, timeout_exc):
-            return True
-
-        usb_error = getattr(usb_core, "USBError", None)
-        if usb_error and isinstance(exc, usb_error):
-            errno = getattr(exc, "errno", None)
-            if errno in {None, 60, 110}:
-                # Different libusb builds report ``ETIMEDOUT`` using different errno
-                # values. Normalise these to a ``None`` result for callers.
+        if usb_core is not None:
+            timeout_exc = getattr(usb_core, "USBTimeoutError", None)
+            if timeout_exc and isinstance(exc, timeout_exc):
                 return True
+
+            usb_error = getattr(usb_core, "USBError", None)
+            if usb_error and isinstance(exc, usb_error):
+                errno = getattr(exc, "errno", None)
+                if errno in {None, 60, 110}:
+                    # Different libusb builds report ``ETIMEDOUT`` using different errno
+                    # values. Normalise these to a ``None`` result for callers.
+                    return True
+
+        # Some PyUSB backends raise their own ``USBTimeoutError`` subclasses that are
+        # not exported through ``usb.core``. Fall back to a name-based check so these
+        # still register as benign timeouts instead of surfacing to callers.
+        if exc.__class__.__name__ == "USBTimeoutError":
+            return True
 
         return False
 
