@@ -19,6 +19,7 @@ from .morse import demo as morse_demo, send_character, send_text
 from .rfid import TagEvent, TagEventType, TagTracker, watch_pads
 from .rfid_demo import LightAction, run_rfid_demo
 from .viewer import CharacterViewer
+from .studio import TagStudio
 
 __all__ = [
     "Gateway",
@@ -36,6 +37,7 @@ __all__ = [
     "watch_pads",
     "CharacterViewer",
     "LightAction",
+    "TagStudio",
     "run_rfid_demo",
     "send_character",
     "send_text",
