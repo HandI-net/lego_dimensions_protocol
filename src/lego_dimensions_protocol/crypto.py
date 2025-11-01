@@ -7,10 +7,13 @@ from typing import Iterable, Sequence, Tuple
 __all__ = [
     "decrypt_character_pages",
     "encrypt_character_pages",
+    "generate_password",
+    "generate_password_bytes",
 ]
 
 _DELTA = 0x9E3779B9
 _UID_LENGTH = 7
+_PASSWORD_SEED = b"UUUUUUU(c) Copyright LEGO 2014AA"
 
 
 def _from_be(value: int) -> int:
@@ -151,3 +154,38 @@ def encrypt_character_pages(uid: Sequence[int], character_id: int) -> Tuple[int,
     payload = (character_id & 0xFFFFFFFF, character_id & 0xFFFFFFFF)
     encrypted = _tea_encrypt(payload, key)
     return tuple(_to_be(value) for value in encrypted)
+
+
+def generate_password(uid: Sequence[int]) -> int:
+    """Return the 32-bit password for *uid* as used by the portal."""
+
+    uid_bytes = _ensure_uid(uid)
+    base = bytearray(_PASSWORD_SEED)
+    base[: len(uid_bytes)] = uid_bytes
+    base[30] = 0xAA
+    base[31] = 0xAA
+
+    v2 = 0
+    for index in range(8):
+        chunk = (
+            (base[index * 4 + 3] << 24)
+            | (base[index * 4 + 2] << 16)
+            | (base[index * 4 + 1] << 8)
+            | base[index * 4]
+        )
+        v4 = ((v2 >> 25) | (v2 << 7)) & 0xFFFFFFFF
+        v5 = ((v2 >> 10) | (v2 << 22)) & 0xFFFFFFFF
+        v2 = (chunk + v4 + v5 - v2) & 0xFFFFFFFF
+    return _to_be(v2)
+
+
+def generate_password_bytes(uid: Sequence[int]) -> Tuple[int, int, int, int]:
+    """Return the password for *uid* as four individual bytes."""
+
+    value = generate_password(uid)
+    return (
+        (value >> 24) & 0xFF,
+        (value >> 16) & 0xFF,
+        (value >> 8) & 0xFF,
+        value & 0xFF,
+    )
