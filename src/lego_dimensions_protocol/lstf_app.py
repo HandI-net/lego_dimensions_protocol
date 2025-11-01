@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from json import JSONDecodeError
 import logging
 from dataclasses import dataclass
 from pathlib import Path
@@ -169,7 +170,11 @@ class LSTFApplication:
 
 
 def _load_config(path: Path) -> AppConfig:
-    contents = json.loads(path.read_text(encoding="utf-8"))
+    raw_contents = path.read_text(encoding="utf-8")
+    try:
+        contents = json.loads(raw_contents)
+    except JSONDecodeError:
+        return AppConfig(default_track=path.resolve(), entries=[])
     try:
         default_track = contents["default_track"]
     except KeyError as exc:
@@ -214,7 +219,7 @@ def _resolve_track_path(base: Path, value: str) -> Path:
     candidate = Path(value)
     if not candidate.is_absolute():
         candidate = base / candidate
-    return candidate
+    return candidate.resolve()
 
 
 def _coerce_character_id(entry: Dict[str, object]) -> Optional[int]:
@@ -242,7 +247,11 @@ def _character_lookup() -> Dict[str, int]:
 
 def main(argv: Optional[Iterable[str]] = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("config", type=Path, help="Path to the LSTF tag configuration file")
+    parser.add_argument(
+        "config",
+        type=Path,
+        help="Path to the LSTF tag configuration file or a standalone .lstf track",
+    )
     parser.add_argument("--poll-timeout", type=int, default=250, help="RFID poll timeout in ms")
     parser.add_argument(
         "--log-level",
