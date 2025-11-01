@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=67", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lego-dimensions-protocol"
+version = "0.1.0"
+description = "Modern Python interface for the LEGO Dimensions portal"
+readme = "readme.md"
+requires-python = ">=3.10"
+keywords = ["lego", "usb", "dimensions", "portal"]
+authors = [
+    { name = "Community Contributors" },
+]
+dependencies = [
+    "pyusb>=1.2",
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "License :: Other/Proprietary License",
+    "Topic :: Software Development :: Libraries",
+    "Topic :: System :: Hardware",
+]
+
+[project.urls]
+Homepage = "https://github.com/"  # Placeholder to be replaced by project maintainers
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[project.scripts]
+lego-dimensions-demo = "lego_dimensions_protocol.demo:main"
+lego-dimensions-rfid-demo = "lego_dimensions_protocol.rfid_demo:main"
