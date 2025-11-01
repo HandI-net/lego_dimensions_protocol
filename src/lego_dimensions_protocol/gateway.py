@@ -346,6 +346,18 @@ class Gateway:
         if exc.__class__.__name__ == "USBTimeoutError":
             return True
 
+        errno = getattr(exc, "errno", None)
+        if errno in {60, 110}:  # pragma: no cover - backend specific
+            # Backends that surface ``LIBUSB_ERROR_TIMEOUT`` without using the
+            # canonical ``USBError`` hierarchy still populate ``errno`` with an
+            # OS-specific timeout code. Normalise those to a ``None`` result so the
+            # poller keeps waiting for real packets.
+            return True
+
+        strerror = getattr(exc, "strerror", "")
+        if isinstance(strerror, str) and "timed out" in strerror.lower():
+            return True
+
         return False
 
     def iter_packets(self, *, timeout: int | None = None) -> Iterator[Tuple[int, ...]]:
