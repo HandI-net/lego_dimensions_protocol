@@ -22,7 +22,7 @@ USB_ERROR_TYPES: Tuple[Type[BaseException], ...] = (_USBError,)
 from . import characters
 from .gateway import Pad
 from .lstf_player import LSTFManager, TrackCache, TrackHandle
-from .rfid import TagEvent, TagEventType, TagTracker
+from .rfid import TagEvent, TagEventType, TagTracker, TagTrackerError
 
 LOGGER = logging.getLogger(__name__)
 
@@ -93,15 +93,20 @@ class LSTFApplication:
                         pass
                 except KeyboardInterrupt:
                     LOGGER.info("Stopping LSTF player")
+                except TagTrackerError as exc:
+                    raise self._portal_error(exc.cause or exc) from exc
                 finally:
                     tracker.remove_listener(listener)
                     manager.close()
         except USB_ERROR_TYPES as exc:
-            message = (
-                "Unable to communicate with the LEGO Dimensions portal "
-                f"({exc}). Ensure the USB toy pad is connected and not in use."
-            )
-            raise PortalConnectionError(message) from exc
+            raise self._portal_error(exc) from exc
+
+    def _portal_error(self, cause: BaseException) -> PortalConnectionError:
+        message = (
+            "Unable to communicate with the LEGO Dimensions portal "
+            f"({cause}). Ensure the USB toy pad is connected and not in use."
+        )
+        return PortalConnectionError(message)
 
     def _start_default(self, manager: LSTFManager) -> None:
         default_program = self._cache.get(self._config.default_track)

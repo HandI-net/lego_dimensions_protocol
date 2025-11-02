@@ -4,6 +4,7 @@ from pathlib import Path
 import sys
 
 import logging
+import threading
 
 import pytest
 
@@ -12,7 +13,7 @@ SRC_ROOT = PROJECT_ROOT / "src"
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
-from lego_dimensions_protocol.rfid import TagTracker
+from lego_dimensions_protocol.rfid import TagTracker, TagTrackerError
 
 
 class _TimeoutGateway:
@@ -65,5 +66,34 @@ def test_tagtracker_propagates_unexpected_errors():
     gateway = _BoomGateway(raises=RuntimeError("usb disconnected"))
     tracker = TagTracker(gateway, auto_start=False)
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(TagTrackerError) as excinfo:
         tracker.poll_once()
+    assert isinstance(excinfo.value.cause, RuntimeError)
+
+
+def test_tagtracker_surfaces_worker_thread_errors():
+    class _WorkerFailGateway(_TimeoutGateway):
+        def __init__(self) -> None:
+            super().__init__()
+            self._worker_triggered = threading.Event()
+
+        def read_packet(self, timeout=None):  # noqa: D401 - signature matches Gateway
+            if threading.current_thread().name == "TagTracker":
+                self._worker_triggered.set()
+                raise RuntimeError("portal disconnected")
+            return None
+
+        def is_timeout_error(self, exc: Exception) -> bool:
+            return False
+
+    gateway = _WorkerFailGateway()
+    tracker = TagTracker(gateway, auto_start=True)
+
+    try:
+        assert gateway._worker_triggered.wait(1), "worker thread did not attempt read"
+        events = tracker.iter_events()
+        with pytest.raises(TagTrackerError) as excinfo:
+            next(events)
+        assert isinstance(excinfo.value.cause, RuntimeError)
+    finally:
+        tracker.close()
