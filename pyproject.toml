@@ -38,3 +38,4 @@ where = ["src"]
 lego-dimensions-demo = "lego_dimensions_protocol.demo:main"
 lego-dimensions-rfid-demo = "lego_dimensions_protocol.rfid_demo:main"
 lego-tag-studio = "lego_dimensions_protocol.studio:main"
+lego-lstf-player = "lego_dimensions_protocol.lstf_app:main"
