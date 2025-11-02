@@ -8,7 +8,16 @@ from json import JSONDecodeError
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional
+from typing import Dict, Iterable, List, Optional, Tuple, Type
+
+try:  # pragma: no cover - optional dependency guard for tests and type checkers
+    from usb.core import USBError as _USBError
+except Exception:  # pragma: no cover - fallback when pyusb is unavailable
+    class _USBError(Exception):
+        """Placeholder USBError used when the real PyUSB type is unavailable."""
+
+
+USB_ERROR_TYPES: Tuple[Type[BaseException], ...] = (_USBError,)
 
 from . import characters
 from .gateway import Pad
@@ -52,6 +61,10 @@ class _ActiveTag:
     persist: bool
 
 
+class PortalConnectionError(RuntimeError):
+    """Raised when the application cannot communicate with the toy pad gateway."""
+
+
 class LSTFApplication:
     def __init__(self, config: AppConfig, *, poll_timeout: int = 250) -> None:
         self._config = config
@@ -61,27 +74,34 @@ class LSTFApplication:
 
     def run(self) -> None:
         LOGGER.info("Starting LSTF tag player")
-        with TagTracker(poll_timeout=self._poll_timeout) as tracker:
-            manager = LSTFManager(tracker.gateway)
-            try:
-                self._start_default(manager)
-            except Exception:
-                manager.close()
-                raise
+        try:
+            with TagTracker(poll_timeout=self._poll_timeout) as tracker:
+                manager = LSTFManager(tracker.gateway)
+                try:
+                    self._start_default(manager)
+                except Exception:
+                    manager.close()
+                    raise
 
-            def listener(event: TagEvent) -> None:
-                self._handle_event(event, manager)
+                def listener(event: TagEvent) -> None:
+                    self._handle_event(event, manager)
 
-            tracker.add_listener(listener)
+                tracker.add_listener(listener)
 
-            try:
-                for _ in tracker.iter_events():
-                    pass
-            except KeyboardInterrupt:
-                LOGGER.info("Stopping LSTF player")
-            finally:
-                tracker.remove_listener(listener)
-                manager.close()
+                try:
+                    for _ in tracker.iter_events():
+                        pass
+                except KeyboardInterrupt:
+                    LOGGER.info("Stopping LSTF player")
+                finally:
+                    tracker.remove_listener(listener)
+                    manager.close()
+        except USB_ERROR_TYPES as exc:
+            message = (
+                "Unable to communicate with the LEGO Dimensions portal "
+                f"({exc}). Ensure the USB toy pad is connected and not in use."
+            )
+            raise PortalConnectionError(message) from exc
 
     def _start_default(self, manager: LSTFManager) -> None:
         default_program = self._cache.get(self._config.default_track)
@@ -277,8 +297,12 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
 
     config = _load_config(args.config)
     app = LSTFApplication(config, poll_timeout=args.poll_timeout)
-    app.run()
+    try:
+        app.run()
+    except PortalConnectionError as exc:
+        LOGGER.error("%s", exc)
+        raise SystemExit(1) from exc
 
 
-__all__ = ["LSTFApplication", "main"]
+__all__ = ["LSTFApplication", "PortalConnectionError", "main"]
 
