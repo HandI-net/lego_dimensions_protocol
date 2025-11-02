@@ -275,6 +275,25 @@ class TagTracker:
 
         return pending
 
+    def _record_exception(self, exc: BaseException) -> None:
+        if self._stop_event.is_set():
+            return
+        first = False
+        with self._state_lock:
+            if self._pending_exception is None:
+                self._pending_exception = exc
+                first = True
+        if first:
+            LOGGER.error(
+                "Tag tracker encountered a fatal gateway error; shutting down",
+                exc_info=True,
+            )
+        self._stop_event.set()
+
+    def _get_pending_exception(self) -> Optional[BaseException]:
+        with self._state_lock:
+            return self._pending_exception
+
     def _handle_packet(self, packet: Tuple[int, ...]) -> Optional[TagEvent]:
         if not packet:
             return None
