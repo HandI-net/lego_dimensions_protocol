@@ -73,7 +73,6 @@ _PALETTE: Sequence[RGBColor] = (
 )
 
 _PAD_SEQUENCE: Sequence[Pad] = (Pad.LEFT, Pad.CENTRE, Pad.RIGHT)
-_PAD_TO_SEQUENCE_INDEX: dict[Pad, int] = {pad: index for index, pad in enumerate(_PAD_SEQUENCE)}
 # ``fade_pads`` expects its entries ordered as centre, left, then right. Keep a separate
 # mapping for that hardware-specific ordering so group fades stay confined to the pad that
 # triggered them.
@@ -105,27 +104,21 @@ def _derive_actions_from_uid(uid: str, pad: Pad) -> List[LightAction]:
     """Create a deterministic light sequence derived from the RFID UID string."""
 
     if not uid:
-        return [
-            LightAction(pad=pad, colour=RGBColor(255, 255, 255), duration=0.45),
-            LightAction(pad=pad, colour=RGBColor(0, 0, 0), duration=0.15),
-        ]
+        return [LightAction(pad=pad, colour=RGBColor(255, 255, 255), duration=0.45)]
 
     actions: List[LightAction] = []
     bytes_in_uid = [int(uid[i : i + 2], 16) for i in range(0, len(uid), 2)]
     if not bytes_in_uid:
         bytes_in_uid = [0]
 
-    pad_offset = _PAD_TO_SEQUENCE_INDEX.get(pad, 0)
-
     for index, value in enumerate(bytes_in_uid):
-        palette_index = (value + index + pad_offset) % len(_PALETTE)
+        palette_index = (value + index) % len(_PALETTE)
         colour = _PALETTE[palette_index]
-        effect_selector = (value + pad_offset + index) % 4
+        effect_selector = (value + index) % 4
 
         if effect_selector == 0:
             on_duration = 0.3 + (value % 4) * 0.05
             actions.append(LightAction(pad=pad, colour=colour, duration=on_duration))
-            actions.append(LightAction(pad=pad, colour=RGBColor(0, 0, 0), duration=0.12))
         elif effect_selector == 1:
             pulse_time = 6 + (value % 15)
             pulse_count = 2 + (index % 4)
@@ -168,6 +161,12 @@ def _derive_actions_from_uid(uid: str, pad: Pad) -> List[LightAction]:
                 )
             )
             actions.append(LightAction(pad=pad, colour=RGBColor(0, 0, 0), duration=0.12))
+
+    while actions and actions[-1].effect is LightEffect.SWITCH and actions[-1].colour == RGBColor(0, 0, 0):
+        actions.pop()
+
+    if not actions:
+        actions.append(LightAction(pad=pad, colour=RGBColor(255, 255, 255), duration=0.45))
 
     return actions
 
