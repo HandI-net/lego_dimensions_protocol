@@ -171,10 +171,22 @@ class LSTFApplication:
 
 def _load_config(path: Path) -> AppConfig:
     raw_contents = path.read_text(encoding="utf-8")
-    try:
-        contents = json.loads(raw_contents)
-    except JSONDecodeError:
+    stripped = raw_contents.lstrip()
+
+    if not stripped:
+        raise ValueError("Configuration file is empty")
+
+    # Treat any LSTF payload (new text wrapper or legacy binary header) as a
+    # standalone track rather than attempting to decode it as JSON.  This
+    # avoids surfacing the JSONDecodeError seen by users invoking the CLI with
+    # a ``.lstf`` file directly.
+    if path.suffix.lower() == ".lstf" or stripped.startswith(("LSTF-TEXT", "LSTF")):
         return AppConfig(default_track=path.resolve(), entries=[])
+
+    try:
+        contents = json.loads(stripped)
+    except JSONDecodeError as exc:
+        raise ValueError(f"Invalid JSON configuration: {path}") from exc
     try:
         default_track = contents["default_track"]
     except KeyError as exc:
