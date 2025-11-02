@@ -18,7 +18,7 @@ from .gateway import Gateway, Pad, PortalNotFoundError, RGBColor
 from .lstf import LSTFError, LSTFProgram, PadCommand, PadTrack, load_lstf
 from .lstf_player import LSTFManager
 from .morse import demo as morse_demo, send_character, send_text
-from .rfid import TagEvent, TagEventType, TagTracker, watch_pads
+from .rfid import TagEvent, TagEventType, TagTracker, TagTrackerError, watch_pads
 from .rfid_demo import LightAction, run_rfid_demo
 from .viewer import CharacterViewer
 from .studio import TagStudio
@@ -34,6 +34,7 @@ __all__ = [
     "get_character",
     "iter_characters",
     "TagTracker",
+    "TagTrackerError",
     "TagEvent",
     "TagEventType",
     "watch_pads",
