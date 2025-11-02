@@ -293,9 +293,7 @@ class _LSTFParser:
                 offset += 2
                 events.append((current_tick, opcode, timebase))
             else:
-                LOGGER.debug("Skipping unknown tempo opcode %s", opcode)
-                if offset < length:
-                    offset += 1
+                raise LSTFError(f"Unsupported tempo opcode {opcode:#04x}.")
         return events
 
     def _apply_palette_override(self, payload: bytes) -> None:
@@ -514,8 +512,7 @@ class _LSTFParser:
                 elif opcode == 0x1F:  # KeyframeState
                     offset += 1
                 else:
-                    LOGGER.debug("Skipping unknown pad opcode %s", opcode)
-                    offset += 1
+                    raise LSTFError(f"Unsupported pad opcode {opcode:#04x} encountered.")
 
         commands.sort(key=lambda command: command.time)
         if duration <= 0.0 and commands:

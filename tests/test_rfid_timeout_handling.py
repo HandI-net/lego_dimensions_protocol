@@ -13,7 +13,7 @@ SRC_ROOT = PROJECT_ROOT / "src"
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
-from lego_dimensions_protocol.rfid import TagTracker
+from lego_dimensions_protocol.rfid import TagTracker, TagTrackerError
 
 
 class _TimeoutGateway:
@@ -66,8 +66,9 @@ def test_tagtracker_propagates_unexpected_errors():
     gateway = _BoomGateway(raises=RuntimeError("usb disconnected"))
     tracker = TagTracker(gateway, auto_start=False)
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(TagTrackerError) as excinfo:
         tracker.poll_once()
+    assert isinstance(excinfo.value.cause, RuntimeError)
 
 
 def test_tagtracker_surfaces_worker_thread_errors():
@@ -91,7 +92,8 @@ def test_tagtracker_surfaces_worker_thread_errors():
     try:
         assert gateway._worker_triggered.wait(1), "worker thread did not attempt read"
         events = tracker.iter_events()
-        with pytest.raises(RuntimeError):
+        with pytest.raises(TagTrackerError) as excinfo:
             next(events)
+        assert isinstance(excinfo.value.cause, RuntimeError)
     finally:
         tracker.close()

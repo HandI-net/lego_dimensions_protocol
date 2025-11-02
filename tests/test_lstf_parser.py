@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from lego_dimensions_protocol.gateway import Pad
-from lego_dimensions_protocol.lstf import LSTFProgram, TEXTUAL_LSTF_HEADER, load_lstf
+from lego_dimensions_protocol.lstf import LSTFError, LSTFProgram, TEXTUAL_LSTF_HEADER, load_lstf
 
 
 def _varint(value: int) -> bytes:
@@ -97,4 +97,46 @@ def test_multi_pad_track_is_not_generic(tmp_path: Path) -> None:
     program = load_lstf(track_path)
     assert not program.is_generic
     assert set(program.pad_tracks.keys()) == {Pad.CENTRE, Pad.LEFT}
+
+
+def test_unknown_tempo_opcode_is_rejected(tmp_path: Path) -> None:
+    tempo_payload = bytearray()
+    tempo_payload.extend(_varint(0))
+    tempo_payload.append(0x99)  # unsupported tempo opcode
+
+    pad_payload = bytearray()
+    pad_payload.extend(_varint(0))
+    pad_payload.append(0x10)
+    pad_payload.extend(struct.pack("<H", 0))
+    pad_payload.append(0x01)
+    pad_payload.extend(struct.pack("<H", 960))
+
+    data = b"".join((
+        _build_head_chunk(),
+        _chunk("TEMP", bytes(tempo_payload)),
+        _build_pad_chunk(bytes(pad_payload)),
+    ))
+
+    track_path = tmp_path / "invalid_tempo.lstf"
+    _write_textual(track_path, data)
+
+    with pytest.raises(LSTFError) as excinfo:
+        load_lstf(track_path)
+    assert "Unsupported tempo opcode" in str(excinfo.value)
+
+
+def test_unknown_pad_opcode_is_rejected(tmp_path: Path) -> None:
+    payload = bytearray()
+    payload.extend(_varint(0))
+    payload.append(0xFE)  # unsupported opcode
+    payload.append(0x00)  # pad opcode payload stub
+
+    data = b"".join((_build_head_chunk(), _chunk("TEMP", b""), _build_pad_chunk(bytes(payload))))
+
+    track_path = tmp_path / "invalid_opcode.lstf"
+    _write_textual(track_path, data)
+
+    with pytest.raises(LSTFError) as excinfo:
+        load_lstf(track_path)
+    assert "Unsupported pad opcode" in str(excinfo.value)
 

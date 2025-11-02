@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from enum import Enum
 import logging
 import time
-from threading import Event, Lock, Thread
+from threading import Event, Lock, Thread, current_thread
 from typing import TYPE_CHECKING, Callable, Dict, Iterator, List, Optional, Sequence, Tuple
 
 from .gateway import Gateway, Pad
@@ -17,6 +17,19 @@ if TYPE_CHECKING:  # pragma: no cover - typing helper only
     from .characters import CharacterInfo
 
 LOGGER = logging.getLogger(__name__)
+
+
+class TagTrackerError(RuntimeError):
+    """Raised when the tag tracker can no longer communicate with the portal."""
+
+    def __init__(self, message: str, *, cause: BaseException | None = None) -> None:
+        super().__init__(message)
+        self.cause = cause
+        if cause is not None:
+            try:  # pragma: no cover - attribute assignment guard
+                self.__cause__ = cause
+            except Exception:  # pragma: no cover - extremely defensive
+                pass
 
 _PAD_REQUEST_INDEX: Dict[Pad, int] = {
     Pad.LEFT: 0,
@@ -180,6 +193,8 @@ class TagTracker:
         while not self._stop_event.is_set():
             try:
                 self.poll_once()
+            except TagTrackerError:
+                return
             except Exception as exc:  # pragma: no cover - defensive worker guard
                 if self._stop_event.is_set():
                     return
@@ -209,8 +224,56 @@ class TagTracker:
                 return None
             if self._stop_event.is_set():
                 return None
-            self._record_exception(exc)
-            raise
+            tracker_exc = self._record_exception(exc)
+            raise tracker_exc
+
+    def _record_exception(self, exc: BaseException) -> TagTrackerError:
+        if self._stop_event.is_set():
+            return exc if isinstance(exc, TagTrackerError) else TagTrackerError(
+                "Portal communication failed", cause=exc
+            )
+        first = False
+        with self._state_lock:
+            if isinstance(exc, TagTrackerError):
+                tracker_exc = exc
+            else:
+                tracker_exc = TagTrackerError(
+                    "Portal communication failed while reading from the toy pad.",
+                    cause=exc,
+                )
+            if self._pending_exception is None:
+                self._pending_exception = tracker_exc
+                first = True
+        if first:
+            LOGGER.error(
+                "Tag tracker encountered a fatal gateway error; shutting down: %s",
+                tracker_exc.cause or tracker_exc,
+            )
+            LOGGER.debug(
+                "Fatal gateway exception details", exc_info=True
+            )
+        self._stop_event.set()
+        return tracker_exc
+
+    def _get_pending_exception(self) -> Optional[BaseException]:
+        with self._state_lock:
+            pending = self._pending_exception
+
+        if pending is None:
+            return None
+
+        worker = self._thread
+        if (
+            worker is not None
+            and worker.is_alive()
+            and worker is not current_thread()
+        ):
+            self._stop_event.set()
+            worker.join()
+        if worker is not current_thread():
+            self._thread = None
+
+        return pending
 
     def _record_exception(self, exc: BaseException) -> None:
         if self._stop_event.is_set():
@@ -415,5 +478,6 @@ __all__ = [
     "TagEvent",
     "TagEventType",
     "TagTracker",
+    "TagTrackerError",
     "watch_pads",
 ]
