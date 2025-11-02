@@ -203,44 +203,41 @@ class _ActiveShow:
             self._thread.join()
 
     def _run(self) -> None:
-        while not self._stop_event.is_set():
-            for action in self._actions:
-                if self._stop_event.is_set():
-                    break
-                if action.effect is LightEffect.SWITCH:
-                    self._gateway.switch_pad(action.pad, action.colour)
-                elif action.effect is LightEffect.FADE:
-                    self._gateway.fade_pad(
-                        action.pad,
-                        pulse_time=action.pulse_time or 1,
-                        pulse_count=action.pulse_count or 1,
-                        colour=action.colour,
-                    )
-                elif action.effect is LightEffect.FLASH:
-                    self._gateway.flash_pad(
-                        action.pad,
-                        on_length=action.on_length or 1,
-                        off_length=action.off_length or 1,
-                        pulse_count=action.pulse_count or 1,
-                        colour=action.colour,
-                    )
-                elif action.effect is LightEffect.GROUP_FADE:
-                    pad_index = _PAD_TO_GROUP_INDEX.get(action.pad)
-                    if pad_index is None:
-                        LOGGER.debug(
-                            "Skipping group fade for unsupported pad %s", action.pad
-                        )
-                        continue
-                    pad_entries: list[tuple[int, int, RGBColor] | None] = [None, None, None]
-                    pad_entries[pad_index] = (
-                        action.pulse_time or 1,
-                        action.pulse_count or 1,
-                        action.colour,
-                    )
-                    self._gateway.fade_pads(pad_entries)
-                else:  # pragma: no cover - defensive against future enum values
-                    self._gateway.switch_pad(action.pad, action.colour)
-                time.sleep(action.duration)
+        for action in self._actions:
+            if self._stop_event.is_set():
+                break
+            if action.effect is LightEffect.SWITCH:
+                self._gateway.switch_pad(action.pad, action.colour)
+            elif action.effect is LightEffect.FADE:
+                self._gateway.fade_pad(
+                    action.pad,
+                    pulse_time=action.pulse_time or 1,
+                    pulse_count=action.pulse_count or 1,
+                    colour=action.colour,
+                )
+            elif action.effect is LightEffect.FLASH:
+                self._gateway.flash_pad(
+                    action.pad,
+                    on_length=action.on_length or 1,
+                    off_length=action.off_length or 1,
+                    pulse_count=action.pulse_count or 1,
+                    colour=action.colour,
+                )
+            elif action.effect is LightEffect.GROUP_FADE:
+                pad_index = _PAD_TO_GROUP_INDEX.get(action.pad)
+                if pad_index is None:
+                    LOGGER.debug("Skipping group fade for unsupported pad %s", action.pad)
+                    continue
+                pad_entries: list[tuple[int, int, RGBColor] | None] = [None, None, None]
+                pad_entries[pad_index] = (
+                    action.pulse_time or 1,
+                    action.pulse_count or 1,
+                    action.colour,
+                )
+                self._gateway.fade_pads(pad_entries)
+            else:  # pragma: no cover - defensive against future enum values
+                self._gateway.switch_pad(action.pad, action.colour)
+            time.sleep(action.duration)
 
 
 def run_rfid_demo(
@@ -263,23 +260,45 @@ def run_rfid_demo(
         tracker = TagTracker(gateway, poll_timeout=poll_timeout, auto_start=False)
         active_shows: dict[Pad, _ActiveShow] = {}
         tag_locations: dict[str, Pad] = {}
+        pad_tag_sets: dict[Pad, set[str]] = {}
         try:
             for event in tracker.iter_events():
                 if event.type is TagEventType.ADDED:
                     if event.pad is None:
                         LOGGER.debug("Ignoring tag %s with unknown pad", event.uid)
                         continue
-                    LOGGER.info("Tag %s detected on %s", event.uid, event.pad)
-                    tag_locations[event.uid] = event.pad
+                    if event.character is not None:
+                        LOGGER.info(
+                            "Tag %s detected on %s: %s (ID %s, %s)",
+                            event.uid,
+                            event.pad,
+                            event.character.name,
+                            event.character.id,
+                            event.character.world,
+                        )
+                    elif event.character_id is not None:
+                        LOGGER.info(
+                            "Tag %s detected on %s: character ID %s (no metadata)",
+                            event.uid,
+                            event.pad,
+                            event.character_id,
+                        )
+                    else:
+                        LOGGER.info(
+                            "Tag %s detected on %s: no character data available",
+                            event.uid,
+                            event.pad,
+                        )
 
-                    for tracked_uid, tracked_pad in list(tag_locations.items()):
-                        if tracked_uid != event.uid and tracked_pad == event.pad:
-                            LOGGER.debug(
-                                "Clearing stale mapping for tag %s on %s",
-                                tracked_uid,
-                                tracked_pad,
-                            )
-                            tag_locations.pop(tracked_uid, None)
+                    previous_pad = tag_locations.get(event.uid)
+                    if previous_pad is not None and previous_pad != event.pad:
+                        previous_tags = pad_tag_sets.get(previous_pad)
+                        if previous_tags is not None:
+                            previous_tags.discard(event.uid)
+
+                    tag_locations[event.uid] = event.pad
+                    pad_tags = pad_tag_sets.setdefault(event.pad, set())
+                    pad_tags.add(event.uid)
 
                     existing_show = active_shows.pop(event.pad, None)
                     if existing_show is not None:
@@ -291,15 +310,34 @@ def run_rfid_demo(
                     active_shows[event.pad] = active_show
                     active_show.start()
                 elif event.type is TagEventType.REMOVED:
-                    LOGGER.info("Tag %s removed", event.uid)
                     pad = tag_locations.pop(event.uid, None)
+                    if pad is None:
+                        for candidate_pad, tags in pad_tag_sets.items():
+                            if event.uid in tags:
+                                pad = candidate_pad
+                                break
+                    if pad is None:
+                        LOGGER.info("Tag %s removed from unknown pad", event.uid)
+                    else:
+                        LOGGER.info("Tag %s removed from %s", event.uid, pad)
                     if pad is None:
                         LOGGER.debug("No pad tracked for removed tag %s", event.uid)
                         continue
-                    show = active_shows.pop(pad, None)
+                    remaining_on_pad = 0
+                    pad_tags = pad_tag_sets.get(pad)
+                    if pad_tags is not None:
+                        pad_tags.discard(event.uid)
+                        remaining_on_pad = len(pad_tags)
+                        if remaining_on_pad == 0:
+                            pad_tag_sets.pop(pad, None)
+
+                    show = active_shows.get(pad)
                     if show is not None and show.uid == event.uid:
                         show.stop()
-                    gateway.switch_pad(pad, RGBColor(0, 0, 0))
+                        active_shows.pop(pad, None)
+
+                    if remaining_on_pad == 0:
+                        gateway.switch_pad(pad, RGBColor(0, 0, 0))
         except KeyboardInterrupt:
             LOGGER.info("Stopping RFID demo")
         finally:
