@@ -10,7 +10,7 @@ from enum import Enum
 from threading import Event, Thread
 from typing import Iterable, List, Sequence
 
-from .gateway import Gateway, Pad, RGBColor
+from .gateway import Gateway, Pad, RGBColor, USBBackendUnavailableError
 from .rfid import TagEventType, TagTracker
 
 LOGGER = logging.getLogger(__name__)
@@ -380,11 +380,20 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     logging.basicConfig(level=getattr(logging, args.log_level.upper(), logging.INFO))
 
-    run_rfid_demo(
-        vendor_id=args.vendor_id,
-        product_ids=args.product_ids,
-        poll_timeout=args.poll_timeout,
-    )
+    try:
+        run_rfid_demo(
+            vendor_id=args.vendor_id,
+            product_ids=args.product_ids,
+            poll_timeout=args.poll_timeout,
+        )
+    except USBBackendUnavailableError as exc:
+        LOGGER.error(str(exc))
+        LOGGER.error(
+            "Install libusb on your system (e.g. 'brew install libusb' on macOS or "
+            "'sudo apt install libusb-1.0-0' on Debian/Ubuntu) and ensure PyUSB can "
+            "locate it."
+        )
+        return 2
     return 0
 
 
