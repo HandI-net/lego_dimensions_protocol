@@ -87,6 +87,10 @@ class PortalNotFoundError(RuntimeError):
     """Raised when a connected LEGO Dimensions portal cannot be located."""
 
 
+class USBBackendUnavailableError(RuntimeError):
+    """Raised when PyUSB cannot locate a usable backend implementation."""
+
+
 class Pad(IntEnum):
     """Identifier for the physical pads on the portal."""
 
@@ -227,7 +231,14 @@ class Gateway:
         self._usb_core = usb_core
         self._usb_util = usb_util
 
-        device = self._find_device(usb_core)
+        try:
+            device = self._find_device(usb_core)
+        except usb_core.NoBackendError as exc:  # type: ignore[attr-defined]
+            raise USBBackendUnavailableError(
+                "PyUSB could not locate a usable backend. "
+                "Install a libusb-compatible backend (for example libusb-1.0) "
+                "and ensure it is available on your system."
+            ) from exc
         if device is None:
             raise PortalNotFoundError(
                 "Unable to locate a LEGO Dimensions portal. "
@@ -586,6 +597,7 @@ __all__ = [
     "Gateway",
     "Pad",
     "PortalNotFoundError",
+    "USBBackendUnavailableError",
     "RGBColor",
     "DEFAULT_VENDOR_ID",
     "DEFAULT_PRODUCT_IDS",
