@@ -4,6 +4,7 @@ from pathlib import Path
 import sys
 
 import logging
+import threading
 
 import pytest
 
@@ -67,3 +68,30 @@ def test_tagtracker_propagates_unexpected_errors():
 
     with pytest.raises(RuntimeError):
         tracker.poll_once()
+
+
+def test_tagtracker_surfaces_worker_thread_errors():
+    class _WorkerFailGateway(_TimeoutGateway):
+        def __init__(self) -> None:
+            super().__init__()
+            self._worker_triggered = threading.Event()
+
+        def read_packet(self, timeout=None):  # noqa: D401 - signature matches Gateway
+            if threading.current_thread().name == "TagTracker":
+                self._worker_triggered.set()
+                raise RuntimeError("portal disconnected")
+            return None
+
+        def is_timeout_error(self, exc: Exception) -> bool:
+            return False
+
+    gateway = _WorkerFailGateway()
+    tracker = TagTracker(gateway, auto_start=True)
+
+    try:
+        assert gateway._worker_triggered.wait(1), "worker thread did not attempt read"
+        events = tracker.iter_events()
+        with pytest.raises(RuntimeError):
+            next(events)
+    finally:
+        tracker.close()

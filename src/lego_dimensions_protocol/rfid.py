@@ -82,6 +82,8 @@ class TagTracker:
         self._listeners: List[Callable[[TagEvent], None]] = []
         self._tag_locations: Dict[str, Optional[Pad]] = {}
         self._lock = Lock()
+        self._state_lock = Lock()
+        self._pending_exception: Optional[BaseException] = None
 
         self._pending_packets: List[Tuple[int, ...]] = []
         self._page_cache: Dict[int, Dict[int, Tuple[int, int, int, int]]] = {}
@@ -101,6 +103,8 @@ class TagTracker:
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
             return
+        with self._state_lock:
+            self._pending_exception = None
         self._stop_event.clear()
         self._thread = Thread(target=self._run, name="TagTracker", daemon=True)
         self._thread.start()
@@ -140,12 +144,20 @@ class TagTracker:
             return self._tag_locations.get(tag_uid)
 
     def iter_events(self) -> Iterator[TagEvent]:
-        while not self._stop_event.is_set():
+        while True:
+            pending = self._get_pending_exception()
+            if pending is not None:
+                raise pending
+            if self._stop_event.is_set():
+                return
             event = self.poll_once()
             if event is not None:
                 yield event
 
     def poll_once(self) -> Optional[TagEvent]:
+        pending = self._get_pending_exception()
+        if pending is not None:
+            raise pending
         packet = self._get_packet(self.poll_timeout)
         if packet is None:
             return self._record_timeout()
@@ -166,7 +178,13 @@ class TagTracker:
 
     def _run(self) -> None:
         while not self._stop_event.is_set():
-            self.poll_once()
+            try:
+                self.poll_once()
+            except Exception as exc:  # pragma: no cover - defensive worker guard
+                if self._stop_event.is_set():
+                    return
+                self._record_exception(exc)
+                return
 
     def _record_timeout(self) -> None:
         if self._timeout_streak == 0:
@@ -189,7 +207,29 @@ class TagTracker:
             timeout_checker = getattr(self._gateway, "is_timeout_error", None)
             if callable(timeout_checker) and timeout_checker(exc):
                 return None
+            if self._stop_event.is_set():
+                return None
+            self._record_exception(exc)
             raise
+
+    def _record_exception(self, exc: BaseException) -> None:
+        if self._stop_event.is_set():
+            return
+        first = False
+        with self._state_lock:
+            if self._pending_exception is None:
+                self._pending_exception = exc
+                first = True
+        if first:
+            LOGGER.error(
+                "Tag tracker encountered a fatal gateway error; shutting down",
+                exc_info=True,
+            )
+        self._stop_event.set()
+
+    def _get_pending_exception(self) -> Optional[BaseException]:
+        with self._state_lock:
+            return self._pending_exception
 
     def _handle_packet(self, packet: Tuple[int, ...]) -> Optional[TagEvent]:
         if not packet:
