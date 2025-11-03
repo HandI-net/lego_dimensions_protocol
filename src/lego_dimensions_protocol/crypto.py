@@ -115,7 +115,7 @@ def _convert_to_int(block: Sequence[int]) -> int:
     result = 0
     for value in block:
         result = (result << 8) | (int(value) & 0xFF)
-    return _from_be(result & 0xFFFFFFFF)
+    return result & 0xFFFFFFFF
 
 
 def decrypt_character_pages(
@@ -133,13 +133,13 @@ def decrypt_character_pages(
     uid_bytes = _ensure_uid(uid)
     key = tuple(_to_be(value) for value in _generate_teakey(uid_bytes))
     block = (
-        _convert_to_int(page24),
-        _convert_to_int(page25),
+        _from_be(_convert_to_int(page24)),
+        _from_be(_convert_to_int(page25)),
     )
     decrypted = _tea_decrypt(block, key)
     if decrypted[0] != decrypted[1]:
         return 0
-    return decrypted[0]
+    return _to_be(decrypted[0])
 
 
 def encrypt_character_pages(uid: Sequence[int], character_id: int) -> Tuple[int, int]:
@@ -151,7 +151,8 @@ def encrypt_character_pages(uid: Sequence[int], character_id: int) -> Tuple[int,
 
     uid_bytes = _ensure_uid(uid)
     key = tuple(_from_be(value) for value in _generate_teakey(uid_bytes))
-    payload = (character_id & 0xFFFFFFFF, character_id & 0xFFFFFFFF)
+    character_value = _from_be(character_id & 0xFFFFFFFF)
+    payload = (character_value, character_value)
     encrypted = _tea_encrypt(payload, key)
     return tuple(_to_be(value) for value in encrypted)
 
