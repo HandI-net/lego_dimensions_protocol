@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from enum import IntEnum
 import errno
 import logging
+import time
+from dataclasses import dataclass
+from enum import IntEnum
 from typing import TYPE_CHECKING, Any, Iterator, Optional, Sequence, Tuple
 
 LOGGER = logging.getLogger(__name__)
@@ -39,6 +40,21 @@ _TIMEOUT_ERRNOS = {
     )
     if value is not None
 }
+
+_DISCONNECT_ERRNOS = {
+    value
+    for value in (
+        getattr(errno, "ENODEV", None),
+        getattr(errno, "ESHUTDOWN", None),
+        getattr(errno, "ENOENT", None),
+        getattr(errno, "ECONNRESET", None),
+        19,
+        108,
+    )
+    if value is not None
+}
+
+_DISCONNECT_BACKEND_CODES = {-4}
 
 DEFAULT_VENDOR_ID = 0x0E6F
 DEFAULT_PRODUCT_IDS: Tuple[int, ...] = (
@@ -201,6 +217,8 @@ class Gateway:
         initialize: bool = True,
         auto_detach: bool = True,
         startup_sequence: Sequence[int] = STARTUP_SEQUENCE,
+        wait_for_device: bool = True,
+        poll_interval: float = 1.0,
     ) -> None:
         self.vendor_id = vendor_id
         self.product_ids = tuple(product_ids) if product_ids else ()
@@ -210,6 +228,9 @@ class Gateway:
         self.timeout = timeout
         self.auto_detach = auto_detach
         self._startup_sequence = tuple(startup_sequence)
+        self._wait_for_device = wait_for_device
+        self._poll_interval = max(poll_interval, 0.1)
+        self._auto_initialize = initialize
 
         self.dev: Optional[USBDevice] = None
         self._usb_core: Any | None = None
@@ -217,9 +238,13 @@ class Gateway:
         self._reattach_driver = False
 
         self.connect()
-        if initialize:
-            self.initialise_portal()
-            self.blank_pads()
+        self._initialise_after_connect()
+
+    def _initialise_after_connect(self) -> None:
+        if self.dev is None or not self._auto_initialize:
+            return
+        self.initialise_portal()
+        self.blank_pads()
 
     def connect(self) -> None:
         """Discover the portal and claim the USB interface."""
@@ -239,11 +264,23 @@ class Gateway:
                 "Install a libusb-compatible backend (for example libusb-1.0) "
                 "and ensure it is available on your system."
             ) from exc
-        if device is None:
-            raise PortalNotFoundError(
-                "Unable to locate a LEGO Dimensions portal. "
-                "Ensure the device is connected and accessible."
-            )
+
+        wait_logged = False
+        while device is None:
+            if not self._wait_for_device:
+                raise PortalNotFoundError(
+                    "Unable to locate a LEGO Dimensions portal. "
+                    "Ensure the device is connected and accessible."
+                )
+            if not wait_logged:
+                LOGGER.info(
+                    "LEGO Dimensions portal not found. Waiting for it to become available..."
+                )
+                wait_logged = True
+            time.sleep(self._poll_interval)
+            device = self._find_device(usb_core)
+        if wait_logged:
+            LOGGER.info("Portal detected. Continuing with initialisation.")
         LOGGER.debug(
             "Connected to portal: vendor=%#04x product=%#04x", device.idVendor, device.idProduct
         )
@@ -256,6 +293,46 @@ class Gateway:
         device.set_configuration()
         usb_util.claim_interface(device, self.interface)
         self.dev = device
+
+    def _ensure_connected(self) -> None:
+        if self.dev is not None:
+            return
+        self.connect()
+        self._initialise_after_connect()
+
+    def _handle_disconnect_error(self, operation: str, exc: Exception) -> bool:
+        if not self._is_disconnect_error(exc):
+            return False
+
+        base_message = f"LEGO Dimensions portal became unavailable during {operation}."
+        if not self._wait_for_device:
+            raise PortalNotFoundError(base_message) from exc
+
+        LOGGER.warning("%s Waiting for it to reconnect...", base_message, exc_info=True)
+        self.close()
+        return True
+
+    def _is_disconnect_error(self, exc: Exception) -> bool:
+        errno_value = _coerce_errno(getattr(exc, "errno", None))
+        if errno_value in _DISCONNECT_ERRNOS:
+            return True
+
+        backend_code = getattr(exc, "backend_error_code", None)
+        if backend_code in _DISCONNECT_BACKEND_CODES:
+            return True
+
+        strerror = getattr(exc, "strerror", None)
+        message = " ".join(
+            part for part in (str(strerror or ""), str(exc)) if part
+        ).lower()
+        if "no such device" in message or "device has been disconnected" in message:
+            return True
+
+        class_name = exc.__class__.__name__.lower()
+        if "nodevice" in class_name or "no_device" in class_name:
+            return True
+
+        return False
 
     def initialise_portal(self) -> None:
         """Send the stock start-up packet to the portal."""
@@ -322,11 +399,20 @@ class Gateway:
     def send_packet(self, packet: Sequence[int]) -> None:
         if len(packet) != MAX_PACKET_LENGTH:
             raise ValueError("Packets sent to the portal must be exactly 32 bytes long.")
-        if self.dev is None:
-            raise RuntimeError("Gateway not connected. Call connect() before issuing commands.")
         data = bytes(_ensure_byte(b, "packet byte") for b in packet)
         LOGGER.debug("Sending packet: %s", " ".join(f"{value:02x}" for value in data))
-        self.dev.write(self.endpoint, data, timeout=self.timeout)
+
+        while True:
+            self._ensure_connected()
+            if self.dev is None:
+                raise RuntimeError("Gateway not connected. Call connect() before issuing commands.")
+            try:
+                self.dev.write(self.endpoint, data, timeout=self.timeout)
+                return
+            except Exception as exc:  # pragma: no cover - USB backend specific
+                if self._handle_disconnect_error("write", exc):
+                    continue
+                raise
 
     def send_command(self, command: Sequence[int]) -> None:
         packet = self.convert_command_to_packet(command)
@@ -347,31 +433,36 @@ class Gateway:
             is returned when the call times out without receiving data.
         """
 
-        if self.dev is None or self._usb_core is None:
-            raise RuntimeError("Gateway not connected. Call connect() before reading packets.")
-
         read_timeout = self.timeout if timeout is None else timeout
-        try:
-            data = self.dev.read(
-                self.read_endpoint,
-                MAX_PACKET_LENGTH,
-                timeout=read_timeout,
-            )
-        except Exception as exc:  # pragma: no cover - USB backend specific
-            is_timeout = self.is_timeout_error(exc)
-            self._log_usb_exception(
-                "read",
-                exc,
-                timeout=read_timeout,
-                is_timeout=is_timeout,
-            )
-            if is_timeout:
-                # Treat backend-specific timeout signals the same way as a "no data"
-                # result so callers can simply poll for packets.
-                return None
-            raise
 
-        return tuple(int(byte) & 0xFF for byte in data)
+        while True:
+            self._ensure_connected()
+            if self.dev is None or self._usb_core is None:
+                raise RuntimeError("Gateway not connected. Call connect() before reading packets.")
+
+            try:
+                data = self.dev.read(
+                    self.read_endpoint,
+                    MAX_PACKET_LENGTH,
+                    timeout=read_timeout,
+                )
+            except Exception as exc:  # pragma: no cover - USB backend specific
+                if self._handle_disconnect_error("read", exc):
+                    continue
+                is_timeout = self.is_timeout_error(exc)
+                self._log_usb_exception(
+                    "read",
+                    exc,
+                    timeout=read_timeout,
+                    is_timeout=is_timeout,
+                )
+                if is_timeout:
+                    # Treat backend-specific timeout signals the same way as a "no data"
+                    # result so callers can simply poll for packets.
+                    return None
+                raise
+
+            return tuple(int(byte) & 0xFF for byte in data)
 
     def is_timeout_error(self, exc: Exception) -> bool:
         """Return ``True`` when *exc* indicates that no data was available."""
