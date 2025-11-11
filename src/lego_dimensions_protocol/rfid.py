@@ -32,15 +32,19 @@ class TagTrackerError(RuntimeError):
                 pass
 
 _PAD_REQUEST_INDEX: Dict[Pad, int] = {
-    Pad.LEFT: 0,
-    Pad.CENTRE: 1,
-    Pad.RIGHT: 2,
+    # The portal expects the same pad identifiers that it emits in tag events when
+    # requesting character/vehicle pages. Earlier revisions incorrectly treated
+    # these as zero-based indices, which meant page reads were sent to the wrong
+    # reader and silently failed to populate the cache.
+    Pad.LEFT: Pad.LEFT.value,
+    Pad.CENTRE: Pad.CENTRE.value,
+    Pad.RIGHT: Pad.RIGHT.value,
 }
 
 _PAGE_RESPONSE_COMMAND = 0x19
 _PAGE_REQUEST_CODE = 0xD2
 _TAG_EVENT_COMMAND = 0x56
-_PAGE_READ_FLAG = 0x23
+_PAGE_READ_FLAG = 0x26
 _CHARACTER_PAGES: Tuple[int, int] = (0x24, 0x25)
 _UID_LENGTH = 7
 _PAGE_RESPONSE_PAD_INDEX = 5
@@ -414,7 +418,7 @@ class TagTracker:
                 )
 
         if any(page not in pages for page in _CHARACTER_PAGES):
-            LOGGER.debug(
+            LOGGER.info(
                 "Tag %s is missing required character pages after refresh; cached=%s",
                 uid_hex,
                 _format_character_pages(pages),
@@ -455,7 +459,7 @@ class TagTracker:
         )
 
         if not character_id:
-            LOGGER.debug(
+            LOGGER.info(
                 "Tag %s produced an empty character identifier after decryption; raw words were 0x%08X/0x%08X",
                 uid_hex,
                 page_words[0],
@@ -463,9 +467,18 @@ class TagTracker:
             )
             return None, None
 
+        if not 1 <= character_id <= 99:
+            LOGGER.warning(
+                "Tag %s produced out-of-range character id %s (expected 1-99); raw payload words 0x%08X/0x%08X",
+                uid_hex,
+                character_id,
+                page_words[0],
+                page_words[1],
+            )
+
         character_info = characters.get_character(character_id)
         if character_info is None:
-            LOGGER.debug(
+            LOGGER.info(
                 "Unknown character id %s (0x%08X) for uid %s",
                 character_id,
                 character_id,

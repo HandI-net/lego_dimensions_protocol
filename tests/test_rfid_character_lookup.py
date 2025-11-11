@@ -64,3 +64,11 @@ def test_handle_packet_includes_character_metadata() -> None:
         assert characters.get_character(_BATMAN_ID) == character
     finally:
         tracker.close()
+
+
+def test_pad_request_index_matches_portal_pad_values() -> None:
+    """Ensure page requests target the same pad identifiers emitted by the portal."""
+
+    assert rfid._pad_to_request_index(Pad.CENTRE) == Pad.CENTRE.value
+    assert rfid._pad_to_request_index(Pad.LEFT) == Pad.LEFT.value
+    assert rfid._pad_to_request_index(Pad.RIGHT) == Pad.RIGHT.value
