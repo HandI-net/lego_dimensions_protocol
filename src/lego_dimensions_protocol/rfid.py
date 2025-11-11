@@ -32,18 +32,42 @@ class TagTrackerError(RuntimeError):
                 pass
 
 _PAD_REQUEST_INDEX: Dict[Pad, int] = {
-    Pad.LEFT: 0,
-    Pad.CENTRE: 1,
-    Pad.RIGHT: 2,
+    # The portal expects the same pad identifiers that it emits in tag events when
+    # requesting character/vehicle pages. Earlier revisions incorrectly treated
+    # these as zero-based indices, which meant page reads were sent to the wrong
+    # reader and silently failed to populate the cache.
+    Pad.LEFT: Pad.LEFT.value,
+    Pad.CENTRE: Pad.CENTRE.value,
+    Pad.RIGHT: Pad.RIGHT.value,
 }
 
 _PAGE_RESPONSE_COMMAND = 0x19
 _PAGE_REQUEST_CODE = 0xD2
 _TAG_EVENT_COMMAND = 0x56
-_PAGE_READ_FLAG = 0x23
+_PAGE_READ_FLAG = 0x26
 _CHARACTER_PAGES: Tuple[int, int] = (0x24, 0x25)
 _UID_LENGTH = 7
 _PAGE_RESPONSE_PAD_INDEX = 5
+
+
+def _format_page_payload(values: Sequence[int]) -> str:
+    return " ".join(f"{int(value) & 0xFF:02x}" for value in values)
+
+
+def _format_character_pages(pages: Dict[int, Sequence[int]]) -> str:
+    if not pages:
+        return "<no pages>"
+    return ", ".join(
+        f"0x{page:02X}=\"{_format_page_payload(payload)}\""
+        for page, payload in sorted(pages.items())
+    )
+
+
+def _page_to_int(payload: Sequence[int]) -> int:
+    value = 0
+    for byte in payload:
+        value = (value << 8) | (int(byte) & 0xFF)
+    return value & 0xFFFFFFFF
 
 
 def _pad_to_request_index(pad: Pad) -> Optional[int]:
@@ -275,25 +299,6 @@ class TagTracker:
 
         return pending
 
-    def _record_exception(self, exc: BaseException) -> None:
-        if self._stop_event.is_set():
-            return
-        first = False
-        with self._state_lock:
-            if self._pending_exception is None:
-                self._pending_exception = exc
-                first = True
-        if first:
-            LOGGER.error(
-                "Tag tracker encountered a fatal gateway error; shutting down",
-                exc_info=True,
-            )
-        self._stop_event.set()
-
-    def _get_pending_exception(self) -> Optional[BaseException]:
-        with self._state_lock:
-            return self._pending_exception
-
     def _handle_packet(self, packet: Tuple[int, ...]) -> Optional[TagEvent]:
         if not packet:
             return None
@@ -385,33 +390,117 @@ class TagTracker:
         if pad_index is None:
             return None, None
 
+        uid_hex = _format_uid(uid_bytes)
         pages = self._get_cached_pages(pad_index)
+        if LOGGER.isEnabledFor(logging.DEBUG):
+            LOGGER.debug(
+                "Pad %s initial cached character pages for tag %s: %s",
+                pad,
+                uid_hex,
+                _format_character_pages(pages),
+            )
         missing = [page for page in _CHARACTER_PAGES if page not in pages]
         if missing:
+            LOGGER.debug(
+                "Requesting missing character pages %s for tag %s on pad %s",
+                ", ".join(f"0x{page:02X}" for page in missing),
+                uid_hex,
+                pad,
+            )
             self._request_pages(pad_index, missing)
             pages = self._get_cached_pages(pad_index)
+            if LOGGER.isEnabledFor(logging.DEBUG):
+                LOGGER.debug(
+                    "Pad %s refreshed cached character pages for tag %s: %s",
+                    pad,
+                    uid_hex,
+                    _format_character_pages(pages),
+                )
 
         if any(page not in pages for page in _CHARACTER_PAGES):
+            LOGGER.info(
+                "Tag %s is missing required character pages after refresh; cached=%s",
+                uid_hex,
+                _format_character_pages(pages),
+            )
             return None, None
+
+        page_payloads = [pages[index] for index in _CHARACTER_PAGES]
+        page_bytes = tuple(_format_page_payload(payload) for payload in page_payloads)
+        page_words = tuple(_page_to_int(payload) for payload in page_payloads)
+        LOGGER.debug(
+            "Character page payloads for tag %s on pad %s: 0x%02X=[%s], 0x%02X=[%s]",
+            uid_hex,
+            pad,
+            _CHARACTER_PAGES[0],
+            page_bytes[0],
+            _CHARACTER_PAGES[1],
+            page_bytes[1],
+        )
 
         try:
             character_id = decrypt_character_pages(
                 uid_bytes,
-                pages[_CHARACTER_PAGES[0]],
-                pages[_CHARACTER_PAGES[1]],
+                page_payloads[0],
+                page_payloads[1],
             )
         except Exception:  # pragma: no cover - defensive
             LOGGER.exception("Failed to decrypt character payload for %s", pad)
             return None, None
 
+        LOGGER.debug(
+            "Decrypted character payload for tag %s: 0x%08X (pages 0x%02X=0x%08X, 0x%02X=0x%08X)",
+            uid_hex,
+            character_id,
+            _CHARACTER_PAGES[0],
+            page_words[0],
+            _CHARACTER_PAGES[1],
+            page_words[1],
+        )
+
         if not character_id:
+            LOGGER.info(
+                "Tag %s produced an empty character identifier after decryption; raw words were 0x%08X/0x%08X",
+                uid_hex,
+                page_words[0],
+                page_words[1],
+            )
             return None, None
+
+        if not 1 <= character_id <= 99:
+            LOGGER.warning(
+                "Tag %s produced out-of-range character id %s (expected 1-99); raw payload words 0x%08X/0x%08X",
+                uid_hex,
+                character_id,
+                page_words[0],
+                page_words[1],
+            )
 
         character_info = characters.get_character(character_id)
         if character_info is None:
-            LOGGER.debug("Unknown character id %s for uid %s", character_id, _format_uid(uid_bytes))
+            LOGGER.info(
+                "Unknown character id %s (0x%08X) for uid %s",
+                character_id,
+                character_id,
+                uid_hex,
+            )
             return character_id, None
 
+        if character_info.id != character_id:
+            LOGGER.warning(
+                "Character lookup mismatch for uid %s: catalog id %s does not match decrypted id %s",
+                uid_hex,
+                character_info.id,
+                character_id,
+            )
+
+        LOGGER.debug(
+            "Resolved tag %s to %s (ID %s, %s)",
+            uid_hex,
+            character_info.name,
+            character_id,
+            character_info.world,
+        )
         return character_id, character_info
 
     def _get_cached_pages(self, pad_index: int) -> Dict[int, Tuple[int, int, int, int]]:
