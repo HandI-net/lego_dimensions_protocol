@@ -7,7 +7,17 @@ from enum import Enum
 import logging
 import time
 from threading import Event, Lock, Thread, current_thread
-from typing import TYPE_CHECKING, Callable, Dict, Iterator, List, Optional, Sequence, Tuple
+from typing import (
+    TYPE_CHECKING,
+    Callable,
+    Dict,
+    Iterator,
+    List,
+    Optional,
+    Sequence,
+    Set,
+    Tuple,
+)
 
 from .gateway import Gateway, Pad
 from . import characters
@@ -46,6 +56,8 @@ _PAGE_REQUEST_CODE = 0xD2
 _TAG_EVENT_COMMAND = 0x56
 _PAGE_READ_FLAG = 0x26
 _CHARACTER_PAGES: Tuple[int, int] = (0x24, 0x25)
+_CLASSIFICATION_PAGES: Tuple[int, ...] = (0x26, 0x27)
+_TAG_DUMP_PAGES: Tuple[int, ...] = tuple(range(0x00, 0x2C))
 _UID_LENGTH = 7
 _PAGE_RESPONSE_PAD_INDEX = 5
 
@@ -125,6 +137,8 @@ class TagTracker:
         self._pending_packets: List[Tuple[int, ...]] = []
         self._page_cache: Dict[int, Dict[int, Tuple[int, int, int, int]]] = {}
         self._seen_uids: set[str] = set()
+        self._dumped_uids: set[str] = set()
+        self._pending_page_reads: Dict[int, Set[int]] = {}
 
         self._stop_event = Event()
         self._thread: Optional[Thread] = None
@@ -334,6 +348,7 @@ class TagTracker:
                 request_index = _pad_to_request_index(pad) if pad is not None else None
                 if request_index is not None:
                     self._page_cache.pop(request_index, None)
+                    self._pending_page_reads.pop(request_index, None)
             else:
                 self._tag_locations[uid] = pad
 
@@ -357,6 +372,9 @@ class TagTracker:
                         event.pad,
                         event.uid,
                     )
+        elif event.removed:
+            with self._lock:
+                self._dumped_uids.discard(uid)
 
         return event
 
@@ -365,21 +383,27 @@ class TagTracker:
             return
 
         pad_index = packet[_PAGE_RESPONSE_PAD_INDEX]
-        pages: Dict[int, Tuple[int, int, int, int]] = {}
-        for index in range(2, len(packet) - 4):
-            page = packet[index]
-            if page not in _CHARACTER_PAGES:
-                continue
-            chunk = tuple(int(value) & 0xFF for value in packet[index + 1 : index + 5])
-            if len(chunk) == 4:
-                pages[page] = chunk  # type: ignore[assignment]
-
-        if not pages:
-            return
-
         with self._lock:
             cache = self._page_cache.setdefault(pad_index, {})
-            cache.update(pages)
+            pending = self._pending_page_reads.get(pad_index)
+            for index in range(2, len(packet) - 4):
+                page = int(packet[index]) & 0xFF
+                if (
+                    pending is not None
+                    and page not in pending
+                    and page not in _CHARACTER_PAGES
+                ):
+                    continue
+                chunk = tuple(
+                    int(value) & 0xFF for value in packet[index + 1 : index + 5]
+                )
+                if len(chunk) != 4:
+                    continue
+                cache[page] = chunk  # type: ignore[assignment]
+                if pending is not None and page in pending:
+                    pending.remove(page)
+            if pending is not None and not pending:
+                self._pending_page_reads.pop(pad_index, None)
 
     def _resolve_character(
         self,
@@ -428,7 +452,7 @@ class TagTracker:
         page_payloads = [pages[index] for index in _CHARACTER_PAGES]
         page_bytes = tuple(_format_page_payload(payload) for payload in page_payloads)
         page_words = tuple(_page_to_int(payload) for payload in page_payloads)
-        LOGGER.debug(
+        LOGGER.info(
             "Character page payloads for tag %s on pad %s: 0x%02X=[%s], 0x%02X=[%s]",
             uid_hex,
             pad,
@@ -437,7 +461,6 @@ class TagTracker:
             _CHARACTER_PAGES[1],
             page_bytes[1],
         )
-
         try:
             character_id = decrypt_character_pages(
                 uid_bytes,
@@ -448,7 +471,7 @@ class TagTracker:
             LOGGER.exception("Failed to decrypt character payload for %s", pad)
             return None, None
 
-        LOGGER.debug(
+        LOGGER.info(
             "Decrypted character payload for tag %s: 0x%08X (pages 0x%02X=0x%08X, 0x%02X=0x%08X)",
             uid_hex,
             character_id,
@@ -457,6 +480,15 @@ class TagTracker:
             _CHARACTER_PAGES[1],
             page_words[1],
         )
+
+        log_dump = False
+        with self._lock:
+            if uid_hex not in self._dumped_uids:
+                self._dumped_uids.add(uid_hex)
+                log_dump = True
+        pages_dump: Optional[Dict[int, Tuple[int, int, int, int]]] = None
+        if log_dump:
+            pages_dump = self._log_full_tag_dump(uid_hex, pad, pad_index)
 
         if not character_id:
             LOGGER.info(
@@ -501,6 +533,15 @@ class TagTracker:
             character_id,
             character_info.world,
         )
+        if pages_dump is not None:
+            classification_page = pages_dump.get(_CLASSIFICATION_PAGES[0])
+            if classification_page is not None:
+                LOGGER.info(
+                    "Classification page 0x%02X for tag %s: [%s]",
+                    _CLASSIFICATION_PAGES[0],
+                    uid_hex,
+                    _format_page_payload(classification_page),
+                )
         return character_id, character_info
 
     def _get_cached_pages(self, pad_index: int) -> Dict[int, Tuple[int, int, int, int]]:
@@ -509,6 +550,9 @@ class TagTracker:
             return dict(cached) if cached is not None else {}
 
     def _request_pages(self, pad_index: int, pages: Sequence[int]) -> None:
+        with self._lock:
+            pending = self._pending_page_reads.setdefault(pad_index, set())
+            pending.update(int(page) & 0xFF for page in pages)
         for page in pages:
             self._send_page_request(pad_index, page)
 
@@ -530,6 +574,68 @@ class TagTracker:
                 continue
             self._pending_packets.append(packet)
         LOGGER.debug("Timed out waiting for page %s on pad index %s", page, pad_index)
+        with self._lock:
+            pending = self._pending_page_reads.get(pad_index)
+            if pending is not None:
+                pending.discard(page)
+                if not pending:
+                    self._pending_page_reads.pop(pad_index, None)
+
+    def _log_full_tag_dump(
+        self,
+        uid_hex: str,
+        pad: Pad,
+        pad_index: int,
+    ) -> Optional[Dict[int, Tuple[int, int, int, int]]]:
+        pages = self._get_cached_pages(pad_index)
+        missing = [page for page in _TAG_DUMP_PAGES if page not in pages]
+        if missing:
+            LOGGER.debug(
+                "Requesting full tag dump pages %s for tag %s on pad %s",
+                ", ".join(f"0x{page:02X}" for page in missing),
+                uid_hex,
+                pad,
+            )
+            try:
+                self._request_pages(pad_index, missing)
+            except AssertionError as exc:
+                LOGGER.info(
+                    "Unable to read full tag dump for %s on %s: %s",
+                    uid_hex,
+                    pad,
+                    exc,
+                )
+                LOGGER.debug("Partial dump available for %s: %s", uid_hex, pages)
+                return pages
+            pages = self._get_cached_pages(pad_index)
+
+        if not pages:
+            LOGGER.info(
+                "Full tag dump unavailable for %s on %s: no pages cached",
+                uid_hex,
+                pad,
+            )
+            return None
+
+        lines = [
+            f"  0x{page:02X}: {_format_page_payload(pages[page])}"
+            for page in _TAG_DUMP_PAGES
+            if page in pages
+        ]
+        LOGGER.info(
+            "Full tag dump for %s on %s:\n%s",
+            uid_hex,
+            pad,
+            "\n".join(lines) if lines else "  <no pages>",
+        )
+        classification_page = pages.get(_CLASSIFICATION_PAGES[0])
+        if classification_page is None:
+            LOGGER.info(
+                "Classification page 0x%02X for tag %s is not available in the dump",
+                _CLASSIFICATION_PAGES[0],
+                uid_hex,
+            )
+        return pages
 
 
 def watch_pads(tag_colours: Optional[Dict[str, Sequence[int]]] = None) -> None:
