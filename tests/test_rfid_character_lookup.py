@@ -41,6 +41,19 @@ def _make_tag_packet(uid: Tuple[int, ...]) -> Tuple[int, ...]:
     )
 
 
+def _make_page_response_packet(pad: Pad) -> Tuple[int, ...]:
+    return (
+        0x55,
+        0x13,
+        0x01,
+        pad.value,
+        0x24,
+        *_BATMAN_PAGE24,
+        0x25,
+        *_BATMAN_PAGE25,
+    )
+
+
 def test_handle_packet_includes_character_metadata() -> None:
     """_handle_packet should populate TagEvent with decrypted character data."""
 
@@ -72,3 +85,29 @@ def test_pad_request_index_matches_portal_pad_values() -> None:
     assert rfid._pad_to_request_index(Pad.CENTRE) == Pad.CENTRE.value
     assert rfid._pad_to_request_index(Pad.LEFT) == Pad.LEFT.value
     assert rfid._pad_to_request_index(Pad.RIGHT) == Pad.RIGHT.value
+
+
+def test_page_response_populates_cache_and_resolves_character() -> None:
+    """Processing a page response should fill the cache and resolve characters."""
+
+    tracker = rfid.TagTracker(_StubGateway(), auto_start=False)
+    pad_index = rfid._pad_to_request_index(Pad.LEFT)
+    assert pad_index is not None
+
+    try:
+        tracker._pending_page_reads[pad_index] = {0x24, 0x25}  # type: ignore[attr-defined]
+
+        packet = _make_page_response_packet(Pad.LEFT)
+        tracker._handle_packet(packet)
+
+        cache = tracker._page_cache[pad_index]  # type: ignore[attr-defined]
+        assert cache[0x24] == _BATMAN_PAGE24
+        assert cache[0x25] == _BATMAN_PAGE25
+        assert pad_index not in tracker._pending_page_reads  # type: ignore[attr-defined]
+
+        character_id, character = tracker._resolve_character(_BATMAN_UID, Pad.LEFT)
+        assert character_id == _BATMAN_ID
+        assert character is not None
+        assert character.id == _BATMAN_ID
+    finally:
+        tracker.close()

@@ -59,7 +59,7 @@ _CHARACTER_PAGES: Tuple[int, int] = (0x24, 0x25)
 _CLASSIFICATION_PAGES: Tuple[int, ...] = (0x26, 0x27)
 _TAG_DUMP_PAGES: Tuple[int, ...] = tuple(range(0x00, 0x2C))
 _UID_LENGTH = 7
-_PAGE_RESPONSE_PAD_INDEX = 5
+_PAGE_RESPONSE_PAD_INDEX = 3
 
 
 def _format_page_payload(values: Sequence[int]) -> str:
