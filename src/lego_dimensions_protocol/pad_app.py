@@ -6,10 +6,12 @@ import json
 import logging
 import sys
 import time
+from contextlib import ExitStack
 from dataclasses import dataclass
 from enum import Enum
+from pathlib import Path
 from threading import Event, Lock, Thread
-from typing import IO, Iterable, Optional, Sequence
+from typing import Iterable, Optional, Sequence
 
 from .gateway import Gateway, Pad, RGBColor
 from .rfid import TagEvent, TagTracker, TagTrackerError
@@ -339,39 +341,60 @@ def _run_loop(commands: Iterable[str], printer: _PromptPrinter, gateway: Gateway
         printer.prompt()
 
 
+def _resolve_command_source(
+    command_source: str, inline_commands: Sequence[str], *, stack: ExitStack
+) -> tuple[Iterable[str], bool]:
+    if inline_commands:
+        commands = [command_source] + list(inline_commands) if command_source is not None else list(inline_commands)
+        return commands, False
+
+    if command_source == "-" or command_source is None:
+        return sys.stdin, sys.stdin.isatty()
+
+    path = Path(command_source)
+    if path.exists():
+        source = stack.enter_context(open(path, "r", encoding="utf-8"))
+        return source, False
+
+    return [command_source], False
+
+
 def main(argv: Optional[Sequence[str]] = None) -> None:
     parser = argparse.ArgumentParser(description="Streaming CLI for controlling LEGO Dimensions pads")
     parser.add_argument(
         "command_source",
         nargs="?",
         default="-",
-        help="File containing commands. Defaults to stdin when omitted or '-'",
+        help=(
+            "File containing commands, a single inline command, or '-' for stdin. "
+            "Quote inline commands in shells that enable globbing (e.g., zsh)."
+        ),
+    )
+    parser.add_argument(
+        "commands",
+        nargs="*",
+        help="Additional inline commands to run directly instead of reading from stdin",
     )
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
 
-    source: IO[str]
-    if args.command_source == "-":
-        source = sys.stdin
-    else:
-        source = open(args.command_source, "r", encoding="utf-8")
+    with ExitStack() as stack:
+        commands, interactive = _resolve_command_source(args.command_source, args.commands, stack=stack)
+        printer = _PromptPrinter(interactive=interactive)
 
-    interactive = source.isatty()
-    printer = _PromptPrinter(interactive=interactive)
-
-    with Gateway() as gateway:
-        stop_event = Event()
-        event_thread = Thread(
-            target=_event_printer, args=(printer, gateway, stop_event), name="PadCLIEvents", daemon=True
-        )
-        event_thread.start()
-        try:
-            printer.prompt()
-            _run_loop(source, printer, gateway)
-        finally:
-            stop_event.set()
-            event_thread.join(timeout=2.0)
+        with Gateway() as gateway:
+            stop_event = Event()
+            event_thread = Thread(
+                target=_event_printer, args=(printer, gateway, stop_event), name="PadCLIEvents", daemon=True
+            )
+            event_thread.start()
+            try:
+                printer.prompt()
+                _run_loop(commands, printer, gateway)
+            finally:
+                stop_event.set()
+                event_thread.join(timeout=2.0)
 
 
 if __name__ == "__main__":  # pragma: no cover - CLI entrypoint
