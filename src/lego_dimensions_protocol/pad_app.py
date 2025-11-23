@@ -79,24 +79,17 @@ def parse_instruction(text: str) -> PadAction | WaitInstruction | QuitInstructio
     if stripped.lower() in {"q", "quit", "exit"}:
         return QuitInstruction()
 
-    if stripped.lower().startswith("wait"):
-        _, args_text = _split_command(stripped)
+    command_name, args_text = _split_command(stripped)
+
+    if command_name == "wait":
         parsed = _parse_argument_list(args_text)
         if len(parsed) != 1:
             raise ValueError("wait expects a single millisecond duration")
         milliseconds = _parse_wait_time(parsed[0])
         return WaitInstruction(milliseconds=milliseconds)
 
-    try:
-        mask_token, command_text = stripped.split(maxsplit=1)
-    except ValueError as exc:
-        raise ValueError("Commands must start with a pad bitmap followed by an action") from exc
-
-    mask = _parse_mask(mask_token)
-    command_name, args_text = _split_command(command_text)
-
     if command_name == PadOperation.SET.value:
-        parsed_colour = _parse_argument_list(args_text)
+        mask, parsed_colour = _parse_argument_list(args_text, expect_mask=True)
         if len(parsed_colour) == 1:
             colour_value = parsed_colour[0]
         elif len(parsed_colour) == 3:
@@ -106,7 +99,11 @@ def parse_instruction(text: str) -> PadAction | WaitInstruction | QuitInstructio
         colour = _parse_colour(colour_value)
         return PadAction(mask=mask, operation=PadOperation.SET, colour=colour)
 
-    parsed_args = _parse_argument_list(args_text)
+    if command_name in {PadOperation.FADE.value, PadOperation.FLASH.value}:
+        mask, parsed_args = _parse_argument_list(args_text, expect_mask=True)
+    else:
+        parsed_args = ()
+        mask = None
 
     if command_name == PadOperation.FADE.value:
         if len(parsed_args) != 3:
@@ -149,13 +146,18 @@ def _split_command(command_text: str) -> tuple[str, str]:
     return name, args
 
 
-def _parse_argument_list(args_text: str) -> tuple:
+def _parse_argument_list(args_text: str, *, expect_mask: bool = False) -> tuple:
     try:
         parsed = ast.literal_eval(args_text)
     except (ValueError, SyntaxError) as exc:  # pragma: no cover - defensive parsing
         raise ValueError(f"Unable to parse arguments: {args_text}") from exc
     if not isinstance(parsed, tuple):
         parsed = (parsed,)
+    if expect_mask:
+        if not parsed:
+            raise ValueError("Pad commands must include a pad bitmap as the first argument")
+        mask = _parse_mask(parsed[0])
+        return mask, tuple(parsed[1:])
     return parsed
 
 
@@ -167,10 +169,10 @@ def _parse_colour(value: object) -> tuple[int, int, int]:
     return colour.as_tuple()
 
 
-def _parse_mask(value: str) -> int:
+def _parse_mask(value: object) -> int:
     try:
-        mask = int(value, 0)
-    except ValueError as exc:
+        mask = int(value, 0) if isinstance(value, str) else int(value)
+    except (ValueError, TypeError) as exc:
         raise ValueError("Pad bitmap must be an integer") from exc
     if mask <= 0 or mask > 0b111:
         raise ValueError("Pad bitmap must select at least one pad using bits 1, 2, and 4")

@@ -49,7 +49,7 @@ class _FakeGateway:
 
 
 def test_parse_set_command() -> None:
-    instruction = parse_instruction("1 set((1, 2, 3))")
+    instruction = parse_instruction("set(1, (1, 2, 3))")
     assert isinstance(instruction, PadAction)
     assert instruction.mask == 1
     assert instruction.operation is PadOperation.SET
@@ -63,7 +63,33 @@ def test_parse_wait_command() -> None:
 
 def test_parse_invalid_mask() -> None:
     with pytest.raises(ValueError):
-        parse_instruction("0 set((1, 2, 3))")
+        parse_instruction("set(0, (1, 2, 3))")
+
+
+def test_parse_fade_command() -> None:
+    instruction = parse_instruction("fade(2, (1, 2, 3), 4, 5)")
+    assert isinstance(instruction, PadAction)
+    assert instruction.mask == 2
+    assert instruction.operation is PadOperation.FADE
+    assert instruction.colour == (1, 2, 3)
+    assert instruction.pulse_time == 4
+    assert instruction.pulse_count == 5
+
+
+def test_parse_flash_command() -> None:
+    instruction = parse_instruction("flash(3, (255, 0, 0), 10, 10, 5)")
+    assert isinstance(instruction, PadAction)
+    assert instruction.mask == 3
+    assert instruction.operation is PadOperation.FLASH
+    assert instruction.colour == (255, 0, 0)
+    assert instruction.on_length == 10
+    assert instruction.off_length == 10
+    assert instruction.pulse_count == 5
+
+
+def test_old_prefixed_mask_format_rejected() -> None:
+    with pytest.raises(ValueError):
+        parse_instruction("1 set((1, 2, 3))")
 
 
 def test_apply_action_two_pads_sends_two_calls() -> None:
