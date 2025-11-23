@@ -58,6 +58,32 @@ high level events for the RFID reader.
 
 ## Command Line Demo
 
+### Pad CLI
+
+The `pad` entrypoint offers a lightweight interface for sending pad commands
+directly from the shell. Inline commands should be quoted in shells that enable
+globbing (e.g., `zsh`) so that parentheses and commas reach the CLI instead of
+being expanded by the shell:
+
+```bash
+# Run an inline command (quote when using zsh)
+pad 'fade(7, (255, 255, 255), 0, 1)'
+
+# Disable globbing for a single invocation instead of quoting
+noglob pad fade(7, (255, 255, 255), 0, 1)
+
+# Read commands from a file or stdin
+pad commands.txt
+cat commands.txt | pad -
+```
+
+Multiple inline commands can be provided by passing additional arguments after
+the first command:
+
+```bash
+pad 'set(1, (0, 0, 255))' 'wait(500)' 'flash(7, (255, 255, 255), 10, 10, 5)'
+```
+
 After installation the `lego-dimensions-demo` command becomes available.  It
 can be used to run the bundled demonstrations:
 

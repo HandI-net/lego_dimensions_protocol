@@ -365,7 +365,10 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         "command_source",
         nargs="?",
         default="-",
-        help="File containing commands, a single inline command, or '-' for stdin",
+        help=(
+            "File containing commands, a single inline command, or '-' for stdin. "
+            "Quote inline commands in shells that enable globbing (e.g., zsh)."
+        ),
     )
     parser.add_argument(
         "commands",
