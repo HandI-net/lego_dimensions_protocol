@@ -1,0 +1,12 @@
+{
+  "codex_instruction_bundle_version": "1.0.0",
+  "project": {
+    "repository": "HandI-net/lego_dimensions_protocol",
+    "package_name": "lego-dimensions-protocol",
+    "python_package": "lego_dimensions_protocol",
+    "current_entry_points_observed": [
+      "lego-dimensions-demo",
+      "lego-dimensions-rfid-demo",
+      "lego-tag-studio",
+      "lego-lstf-player",
+      "lego-tag
