@@ -26,7 +26,10 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/"  # Placeholder to be replaced by project maintainers
+Homepage = "https://github.com/HandI-net/lego_dimensions_protocol"
+Source = "https://github.com/HandI-net/lego_dimensions_protocol"
+Issues = "https://github.com/HandI-net/lego_dimensions_protocol/issues"
+Documentation = "https://github.com/HandI-net/lego_dimensions_protocol/tree/main/docs"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
@@ -37,6 +40,10 @@ where = ["src"]
 [project.scripts]
 lego-dimensions-demo = "lego_dimensions_protocol.demo:main"
 lego-dimensions-rfid-demo = "lego_dimensions_protocol.rfid_demo:main"
+lego-dimensions-doctor = "lego_dimensions_protocol.doctor:main"
+lego-dimensions-characters = "lego_dimensions_protocol.character_cli:main"
+lego-dimensions-record = "lego_dimensions_protocol.record_cli:record_main"
+lego-dimensions-replay = "lego_dimensions_protocol.record_cli:replay_main"
 lego-tag-studio = "lego_dimensions_protocol.studio:main"
 lego-lstf-player = "lego_dimensions_protocol.lstf_app:main"
 lego-tag-studio-gtk = "lego_dimensions_protocol.gtkstudio:main"

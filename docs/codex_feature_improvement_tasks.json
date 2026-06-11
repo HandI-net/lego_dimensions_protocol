@@ -7,4 +7,284 @@
     "current_entry_points_observed": [
       "lego-dimensions-demo",
       "lego-dimensions-rfid-demo",
-      "lego-tag-st
+      "lego-tag-studio",
+      "lego-lstf-player",
+      "lego-tag-studio-gtk",
+      "pad"
+    ],
+    "primary_design_goal": "Improve usability, diagnostics, safety, and extensibility of the LEGO Dimensions portal Python package without breaking the existing typed API.",
+    "important_terminology": {
+      "portal": "A physical LEGO Dimensions USB toy pad device.",
+      "pad": "One of the three zones on a portal: centre, left, or right.",
+      "multi_unit": "Future support for operating multiple physical USB portal devices at the same time. Do not confuse this with the existing three pad zones on one portal."
+    }
+  },
+  "global_instructions_to_codex": {
+    "implementation_style": [
+      "Prefer small, coherent changes with clear module boundaries.",
+      "Preserve existing public imports and backwards compatibility wherever practical.",
+      "Add new functionality behind new modules, CLI commands, or optional helper classes before changing existing behaviours.",
+      "Use dependency injection for USB access and gateway construction so features can be tested without real hardware.",
+      "When adding command line tools, support both human-readable output and machine-readable JSON where it is useful.",
+      "Keep hardware-touching operations safe by default.",
+      "Prefer dataclasses or TypedDict-like structures for diagnostic, event, preset, and capture records.",
+      "Use logging for developer diagnostics and stdout/stderr for user-facing CLI output."
+    ],
+    "multi_unit_future_constraints": [
+      "Do not introduce new global singleton portal state.",
+      "Do not assume that exactly one USB portal will always exist.",
+      "Where new APIs identify a portal, use explicit names such as portal_id, device_id, serial_number, bus_address, or unit_id.",
+      "Where new APIs identify a zone on a portal, keep using Pad for centre/left/right pad zones.",
+      "Design event objects and file formats so a future portal_id can be added without breaking callers."
+    ],
+    "quality_bar": {
+      "tests": [
+        "Add or update pytest tests for new pure-Python logic.",
+        "Avoid requiring real USB hardware in CI."
+      ],
+      "typing": [
+        "Preserve Python 3.10+ compatibility.",
+        "Use type hints for public functions and new dataclasses.",
+        "Keep py.typed compatibility intact."
+      ],
+      "documentation": [
+        "Update readme.md when adding user-facing commands.",
+        "Document dangerous operations and dry-run behaviour prominently."
+      ],
+      "packaging": [
+        "Update pyproject.toml only when adding entry points, dependencies, project metadata, or optional extras.",
+        "Avoid unnecessary dependencies."
+      ]
+    },
+    "suggested_execution_order": [
+      "task_01_doctor_command",
+      "task_02_platform_setup_docs",
+      "task_04_named_character_cli",
+      "task_03_safe_tag_backup_restore_verify",
+      "task_09_structured_logging_and_capture",
+      "task_05_light_show_presets",
+      "task_06_record_and_replay",
+      "task_07_async_support",
+      "task_08_local_web_ui",
+      "task_10_project_metadata_cleanup"
+    ]
+  },
+  "tasks": [
+    {
+      "id": "task_01_doctor_command",
+      "title": "Add a hardware diagnostic doctor command",
+      "priority": "highest",
+      "type": "feature",
+      "summary": "Create a new CLI command that diagnoses Python, PyUSB, libusb/backend availability, portal discovery, interface claiming, endpoint read/write behaviour, simple light control, and optional RFID packet reads.",
+      "suggested_files": {
+        "new": [
+          "src/lego_dimensions_protocol/doctor.py",
+          "tests/test_doctor.py"
+        ],
+        "modified": [
+          "pyproject.toml",
+          "readme.md",
+          "src/lego_dimensions_protocol/__init__.py"
+        ]
+      }
+    },
+    {
+      "id": "task_02_platform_setup_docs",
+      "title": "Improve platform-specific installation and USB setup documentation",
+      "priority": "highest",
+      "type": "documentation",
+      "summary": "Expand documentation for Linux, macOS, and Windows USB setup, including libusb installation, permissions, udev rules, kernel driver/interface claiming, and common troubleshooting paths.",
+      "suggested_files": {
+        "new": [
+          "docs/platform-setup.md",
+          "docs/troubleshooting.md"
+        ],
+        "modified": [
+          "readme.md"
+        ]
+      }
+    },
+    {
+      "id": "task_03_safe_tag_backup_restore_verify",
+      "title": "Add safer tag backup, restore, and verify workflows",
+      "priority": "high",
+      "type": "feature",
+      "summary": "Extend tag tooling so users can back up a tag, restore from a backup, and verify expected character/tag data before and after writes.",
+      "suggested_files": {
+        "new": [
+          "src/lego_dimensions_protocol/tag_backup.py",
+          "tests/test_tag_backup.py"
+        ],
+        "modified": [
+          "src/lego_dimensions_protocol/studio.py",
+          "readme.md"
+        ]
+      }
+    },
+    {
+      "id": "task_04_named_character_cli",
+      "title": "Add named character lookup and character-aware CLI operations",
+      "priority": "high",
+      "type": "feature",
+      "summary": "Allow users to list and search character metadata and use character names where numeric IDs are currently required.",
+      "suggested_files": {
+        "new": [
+          "src/lego_dimensions_protocol/character_cli.py",
+          "tests/test_character_cli.py"
+        ],
+        "modified": [
+          "src/lego_dimensions_protocol/studio.py",
+          "pyproject.toml",
+          "readme.md"
+        ]
+      }
+    },
+    {
+      "id": "task_05_light_show_presets",
+      "title": "Add reusable light-show presets",
+      "priority": "medium",
+      "type": "feature",
+      "summary": "Create a preset system for common portal light patterns such as rainbow, pulse, police, identify, blank, tag-reactive, and custom preset files.",
+      "suggested_files": {
+        "new": [
+          "src/lego_dimensions_protocol/presets.py",
+          "tests/test_presets.py",
+          "examples/light_presets.py"
+        ],
+        "modified": [
+          "src/lego_dimensions_protocol/pad_app.py",
+          "readme.md"
+        ]
+      }
+    },
+    {
+      "id": "task_06_record_and_replay",
+      "title": "Add record and replay mode for tag and light sessions",
+      "priority": "medium",
+      "type": "feature",
+      "summary": "Allow users to record portal/tag events and optionally light commands to a session file, then replay sessions later for demos, debugging, or tests.",
+      "suggested_files": {
+        "new": [
+          "src/lego_dimensions_protocol/session.py",
+          "src/lego_dimensions_protocol/record_cli.py",
+          "tests/test_session.py"
+        ],
+        "modified": [
+          "pyproject.toml",
+          "readme.md"
+        ]
+      }
+    },
+    {
+      "id": "task_07_async_support",
+      "title": "Add optional async APIs for event consumption and portal operations",
+      "priority": "medium",
+      "type": "feature",
+      "summary": "Create asyncio-friendly wrappers for tag events and selected gateway operations while preserving the existing synchronous API.",
+      "suggested_files": {
+        "new": [
+          "src/lego_dimensions_protocol/asyncio.py",
+          "tests/test_asyncio_api.py"
+        ],
+        "modified": [
+          "src/lego_dimensions_protocol/__init__.py",
+          "readme.md"
+        ]
+      }
+    },
+    {
+      "id": "task_08_local_web_ui",
+      "title": "Add an optional local web UI",
+      "priority": "lower",
+      "type": "feature",
+      "summary": "Create a browser-based local control panel for device status, pad lights, live RFID events, character lookup, tag inspection, tag backup, preset light shows, and diagnostics.",
+      "suggested_files": {
+        "new": [
+          "src/lego_dimensions_protocol/webapp.py",
+          "src/lego_dimensions_protocol/web_static/",
+          "tests/test_webapp.py"
+        ],
+        "modified": [
+          "pyproject.toml",
+          "readme.md"
+        ]
+      }
+    },
+    {
+      "id": "task_09_structured_logging_and_capture",
+      "title": "Add structured logging and packet/session capture export",
+      "priority": "medium",
+      "type": "feature",
+      "summary": "Provide a consistent way to export packet reads/writes, tag events, diagnostic checks, and high-level commands to JSON or NDJSON for debugging and bug reports.",
+      "suggested_files": {
+        "new": [
+          "src/lego_dimensions_protocol/capture.py",
+          "tests/test_capture.py"
+        ],
+        "modified": [
+          "src/lego_dimensions_protocol/gateway.py",
+          "src/lego_dimensions_protocol/rfid.py",
+          "src/lego_dimensions_protocol/demo.py",
+          "src/lego_dimensions_protocol/studio.py",
+          "readme.md"
+        ]
+      }
+    },
+    {
+      "id": "task_10_project_metadata_cleanup",
+      "title": "Clean up package metadata before broader publishing",
+      "priority": "medium",
+      "type": "maintenance",
+      "summary": "Review and correct package metadata such as homepage URL, license classifier, versioning policy, optional extras, project URLs, and README packaging behaviour.",
+      "suggested_files": {
+        "modified": [
+          "pyproject.toml",
+          "readme.md",
+          "LICENSE",
+          "CHANGELOG.md"
+        ]
+      }
+    }
+  ],
+  "cross_task_architecture_recommendations": {
+    "suggested_new_abstractions": [
+      {
+        "name": "PortalIdentity",
+        "purpose": "Represent a physical USB portal in diagnostics, captures, logs, and future multi-unit routing."
+      },
+      {
+        "name": "PortalManager",
+        "purpose": "Future manager for discovering and operating multiple physical portals."
+      },
+      {
+        "name": "CaptureWriter",
+        "purpose": "Shared NDJSON writer for diagnostics, tag events, packet logs, and session recording."
+      },
+      {
+        "name": "FakeGateway",
+        "purpose": "Reusable testing fake for CLI, presets, recorder, web UI, and async wrappers."
+      }
+    ],
+    "preferred_file_format_defaults": {
+      "diagnostic_report": "json",
+      "tag_backup": "json",
+      "capture_log": "ndjson",
+      "recorded_session": "ndjson",
+      "preset_definition_future": "json"
+    },
+    "safety_defaults": [
+      "Dry-run by default for tag writes/restores.",
+      "Blank pads after demos, diagnostics, presets, interrupted sessions, and exceptions unless explicitly disabled.",
+      "Bind web UI to 127.0.0.1 by default.",
+      "Fail rather than guess when hardware selection, character names, or tag identity are ambiguous."
+    ],
+    "future_multi_unit_roadmap": [
+      "Phase 1: Add portal_id fields to new data models and file formats while still operating one portal.",
+      "Phase 2: Add discovery that can list multiple USB portal candidates.",
+      "Phase 3: Add explicit CLI targeting with --portal and --all-portals.",
+      "Phase 4: Add PortalManager capable of owning multiple Gateway instances.",
+      "Phase 5: Add concurrent async event streams per physical portal.",
+      "Phase 6: Add web UI portal selector and per-portal controls."
+    ]
+  }
+}

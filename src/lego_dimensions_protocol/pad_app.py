@@ -14,6 +14,7 @@ from threading import Event, Lock, Thread
 from typing import Iterable, Optional, Sequence
 
 from .gateway import Gateway, Pad, RGBColor
+from .presets import get_preset, list_presets, parse_colour as parse_preset_colour, preview_preset, PresetRunner
 from .rfid import TagEvent, TagTracker, TagTrackerError
 
 LOGGER = logging.getLogger(__name__)
@@ -359,7 +360,36 @@ def _resolve_command_source(
     return [command_source], False
 
 
+def _run_preset_cli(argv: Sequence[str]) -> None:
+    parser = argparse.ArgumentParser(prog="pad preset", description="List, preview, or run built-in light presets")
+    parser.add_argument("preset_name", nargs="?", help="Preset to run, or 'list' to show built-ins")
+    parser.add_argument("--duration", type=float, default=None, help="Maximum seconds to run looping presets")
+    parser.add_argument("--colour", help="Override preset colour as r,g,b where supported")
+    parser.add_argument("--preview", "--dry-run", action="store_true", help="Print planned steps without touching hardware")
+    parser.add_argument("--no-cleanup", action="store_true", help="Do not blank pads after the preset exits")
+    args = parser.parse_args(argv)
+
+    if args.preset_name in {None, "list"}:
+        for preset in list_presets():
+            print(f"{preset.name}: {preset.description}")
+        return
+    colour = parse_preset_colour(args.colour) if args.colour else None
+    if args.preview:
+        print(json.dumps(preview_preset(args.preset_name, colour=colour), indent=2))
+        return
+    with Gateway() as gateway:
+        PresetRunner(gateway, cleanup=not args.no_cleanup).run(
+            get_preset(args.preset_name), duration=args.duration, colour=colour
+        )
+
+
 def main(argv: Optional[Sequence[str]] = None) -> None:
+    argv = list(argv) if argv is not None else sys.argv[1:]
+    if argv and argv[0] == "preset":
+        logging.basicConfig(level=logging.INFO, format="%(message)s")
+        _run_preset_cli(argv[1:])
+        return
+
     parser = argparse.ArgumentParser(description="Streaming CLI for controlling LEGO Dimensions pads")
     parser.add_argument(
         "command_source",
