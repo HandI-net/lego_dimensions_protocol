@@ -21,6 +21,12 @@ for integrating the portal with contemporary automation projects.
   identifiers to repeatable lighting sequences.
 - Type hints and a `py.typed` marker for seamless integration with static type
   checkers.
+- Hardware diagnostics with `lego-dimensions-doctor`, including JSON output for
+  bug reports.
+- Character catalog lookup via `lego-dimensions-characters` and
+  `lego-tag-studio characters`, plus name-aware tag studio writes.
+- Built-in light presets such as `rainbow`, `pulse`, `police`, `identify`, and
+  `blank` through `pad preset`.
 
 ## Installation
 
@@ -33,8 +39,26 @@ python -m pip install .
 ```
 
 The only runtime dependency is `pyusb`.  Ensure the underlying `libusb` shared
-library is available on your platform (Linux distributions typically ship it,
-for Windows install [libusb](https://libusb.info/)).
+library is available on your platform. See [platform setup](docs/platform-setup.md)
+for Linux udev rules, macOS Homebrew setup, Windows driver notes, and the
+difference between one physical portal and its three pad zones.
+
+## Hardware setup and diagnostics
+
+Real hardware is required for demos and portal operations, but not for importing
+the package or using the character catalog. If USB access fails, run the doctor
+command first:
+
+```bash
+lego-dimensions-doctor
+lego-dimensions-doctor --json > doctor-report.json
+lego-dimensions-doctor --verbose --rfid-timeout 3000
+```
+
+The doctor checks PyUSB importability, libusb/backend availability, portal
+discovery, basic gateway access, conservative light writes, and optional RFID
+read activity. It blanks pad lights after light tests. For common error messages
+and recovery steps, see [troubleshooting](docs/troubleshooting.md).
 
 ## Quickstart
 
@@ -84,6 +108,18 @@ the first command:
 pad 'set(1, (0, 0, 255))' 'wait(500)' 'flash(7, (255, 255, 255), 10, 10, 5)'
 ```
 
+Built-in presets provide safer reusable light shows and blank pads on exit by
+default:
+
+```bash
+pad preset list
+pad preset rainbow --duration 10
+pad preset pulse --colour 128,0,255 --duration 10
+pad preset identify
+pad preset blank
+pad preset police --preview
+```
+
 After installation the `lego-dimensions-demo` command becomes available.  It
 can be used to run the bundled demonstrations:
 
@@ -93,6 +129,37 @@ lego-dimensions-demo --tests switch fade --pause 1.5 --log-level DEBUG
 
 Use `--vendor-id` and `--product-id` if you need to target a specific hardware
 revision.
+
+### Character lookup and tag studio
+
+Character metadata is available without hardware:
+
+```bash
+lego-dimensions-characters list
+lego-dimensions-characters search Batman
+lego-dimensions-characters show 42
+lego-tag-studio characters search Gandalf
+```
+
+`lego-tag-studio write` accepts either a numeric character ID or an unambiguous
+character name. Writes remain safe by default: without `--apply`, the studio only
+prints the commands it would send.
+
+```bash
+lego-tag-studio write Batman --pad centre
+lego-tag-studio write 42 --pad centre --apply
+```
+
+### Session record and replay
+
+Tag sessions can be recorded as schema-versioned newline-delimited JSON. Dry-run
+replay prints intended actions without touching hardware; direct hardware replay
+is reserved for a later implementation.
+
+```bash
+lego-dimensions-record session.ndjson --duration 60
+lego-dimensions-replay session.ndjson --dry-run
+```
 
 To explore the RFID helper functionality, launch the dedicated light show:
 
@@ -113,3 +180,11 @@ projects should import the `lego_dimensions_protocol` package instead.
 
 Contributions are welcome!  Please open issues or pull requests describing the
 hardware variant you are working with and any new commands you discover.
+
+## Project metadata
+
+The package targets Python 3.10+ and keeps planned multi-unit portal support
+separate from currently implemented single-portal commands. The version in
+`pyproject.toml` is not automatically bumped by feature work; maintainers should
+update it during release preparation. No repository license file is currently
+present, so license metadata is intentionally left for maintainer review.

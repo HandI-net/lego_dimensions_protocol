@@ -13,26 +13,37 @@ stable and easy to integrate with contemporary Python software.
 from __future__ import annotations
 
 from .characters import CharacterInfo, get_character, iter_characters
+from .character_cli import CharacterResolutionError, resolve_character, search_characters
 from .editor import TagEditor, TagWritePlan
+from .doctor import DiagnosticCheck, DiagnosticReport, PortalCandidate, run_diagnostics
 from .gateway import Gateway, Pad, PortalNotFoundError, RGBColor
 from .lstf import LSTFError, LSTFProgram, PadCommand, PadTrack, load_lstf
 from .lstf_player import LSTFManager
 from .morse import demo as morse_demo, send_character, send_text
 from .rfid import TagEvent, TagEventType, TagTracker, TagTrackerError, watch_pads
 from .rfid_demo import LightAction, run_rfid_demo
+from .session import SessionRecord, SessionWriter, dry_run_actions, read_session
 from .viewer import CharacterViewer
 from .studio import TagStudio
+from .presets import LightPreset, PresetRunner, PresetStep, get_preset, list_presets, run_preset
 
 __all__ = [
     "Gateway",
     "Pad",
     "PortalNotFoundError",
+    "DiagnosticCheck",
+    "DiagnosticReport",
+    "PortalCandidate",
+    "run_diagnostics",
     "RGBColor",
     "TagEditor",
     "TagWritePlan",
     "CharacterInfo",
     "get_character",
     "iter_characters",
+    "CharacterResolutionError",
+    "resolve_character",
+    "search_characters",
     "TagTracker",
     "TagTrackerError",
     "TagEvent",
@@ -47,6 +58,16 @@ __all__ = [
     "CharacterViewer",
     "LightAction",
     "TagStudio",
+    "LightPreset",
+    "PresetRunner",
+    "PresetStep",
+    "get_preset",
+    "list_presets",
+    "run_preset",
+    "SessionRecord",
+    "SessionWriter",
+    "dry_run_actions",
+    "read_session",
     "run_rfid_demo",
     "send_character",
     "send_text",

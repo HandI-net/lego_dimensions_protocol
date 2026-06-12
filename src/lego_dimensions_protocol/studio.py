@@ -8,6 +8,7 @@ from typing import List, Optional, Sequence, Tuple
 
 from . import characters
 from .characters import CharacterInfo
+from .character_cli import CharacterResolutionError, main as characters_main, resolve_character
 from .editor import TagEditor, TagWritePlan
 from .gateway import Pad
 from .rfid import TagEvent, TagTracker
@@ -281,8 +282,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     write_parser.add_argument(
         "character",
-        type=int,
-        help="Character identifier to encode on the destination tag",
+        help="Character identifier or unambiguous character name to encode on the destination tag",
     )
     write_parser.add_argument(
         "--pad",
@@ -302,6 +302,11 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Poll timeout in milliseconds while waiting for tags",
     )
 
+    characters_parser = subparsers.add_parser(
+        "characters", help="List, search, or show known character metadata"
+    )
+    characters_parser.add_argument("character_args", nargs=argparse.REMAINDER)
+
     return parser
 
 
@@ -312,6 +317,25 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     if args.command is None:  # pragma: no cover - argument guard
         parser.print_help()
         return
+
+    if args.command == "characters":
+        character_args = list(getattr(args, "character_args", []))
+        if not character_args:
+            character_args = ["list"]
+        raise SystemExit(characters_main(character_args))
+
+    if args.command == "write":
+        try:
+            resolved_character = resolve_character(args.character)
+        except CharacterResolutionError as exc:
+            print(exc)
+            if exc.candidates:
+                print("Candidates:")
+                for candidate in exc.candidates:
+                    print(f"  {candidate.id}: {candidate.name} ({candidate.world})")
+            raise SystemExit(1) from exc
+        args.character = resolved_character.id
+        print(f"Resolved character: {resolved_character.name} (ID {resolved_character.id}, {resolved_character.world})")
 
     poll_timeout = getattr(args, "timeout", 250)
 
